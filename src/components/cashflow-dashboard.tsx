@@ -37,9 +37,10 @@ export function CashflowDashboard() {
     useCashflowStore();
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-  const INCOME_COLOR = "#16a34a"; // Tailwind green-600
-  const EXPENSE_COLOR = "#dc2626"; // Tailwind red-600
+  const INCOME_COLOR = "#16a34a";
+  const EXPENSE_COLOR = "#dc2626";
 
   const totalIncome = useMemo(
     () =>
@@ -59,7 +60,6 @@ export function CashflowDashboard() {
 
   const balance = totalIncome - totalExpense;
 
-  // Prepare data for charts
   const incomeExpenseData = useMemo(
     () => [
       { name: "Income", value: totalIncome, fill: INCOME_COLOR },
@@ -103,11 +103,13 @@ export function CashflowDashboard() {
   }, [fetchCashflows]);
 
   const handleDelete = async (id: string) => {
+    setIsDeleting(true);
     try {
       await deleteCashflow(id);
       toast.success("Deleted", {
         description: "Cashflow entry has been deleted successfully.",
       });
+      setDeletingId(null);
     } catch (deleteError) {
       const description =
         deleteError instanceof Error
@@ -115,7 +117,7 @@ export function CashflowDashboard() {
           : "Unable to delete cashflow.";
       toast.error("Error", { description });
     } finally {
-      setDeletingId(null);
+      setIsDeleting(false);
     }
   };
 
@@ -129,6 +131,13 @@ export function CashflowDashboard() {
       month: "short",
       day: "numeric",
     });
+  };
+
+  const formatCurrency = (amount: number) => {
+    return `₱${amount.toLocaleString("en-PH", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   };
 
   return (
@@ -153,11 +162,7 @@ export function CashflowDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-green-600">
-              $
-              {totalIncome.toLocaleString("en-US", {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              {formatCurrency(totalIncome)}
             </div>
           </CardContent>
         </Card>
@@ -170,11 +175,7 @@ export function CashflowDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-red-600">
-              $
-              {totalExpense.toLocaleString("en-US", {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              {formatCurrency(totalExpense)}
             </div>
           </CardContent>
         </Card>
@@ -189,11 +190,7 @@ export function CashflowDashboard() {
             <div
               className={`text-3xl font-bold ${balance >= 0 ? "text-green-600" : "text-red-600"}`}
             >
-              $
-              {balance.toLocaleString("en-US", {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              {formatCurrency(balance)}
             </div>
           </CardContent>
         </Card>
@@ -259,7 +256,7 @@ export function CashflowDashboard() {
                         cy="50%"
                         outerRadius={80}
                         label={({ name, value }) =>
-                          `${name}: $${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          `${name}: ₱${value.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         }
                       >
                         {categoryBreakdown.map((entry) => (
@@ -348,11 +345,7 @@ export function CashflowDashboard() {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-foreground font-semibold">
-                        $
-                        {cashflow.amount.toLocaleString("en-US", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {formatCurrency(cashflow.amount)}
                       </td>
                       <td className="py-3 px-4 text-foreground">
                         {formatDate(cashflow.date)}
@@ -377,9 +370,9 @@ export function CashflowDashboard() {
                           </Button>
                           <AlertDialog
                             open={deletingId === cashflow.id}
-                            onOpenChange={(open) =>
-                              !open && setDeletingId(null)
-                            }
+                            onOpenChange={(open) => {
+                              if (!open) setDeletingId(null);
+                            }}
                           >
                             <AlertDialogTrigger asChild>
                               <Button
@@ -399,13 +392,15 @@ export function CashflowDashboard() {
                                 entry? This action cannot be undone.
                               </AlertDialogDescription>
                               <div className="flex justify-end gap-2">
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogCancel onClick={() => setDeletingId(null)}>
+                                  Cancel
+                                </AlertDialogCancel>
                                 <AlertDialogAction
                                   onClick={() => handleDelete(cashflow.id)}
-                                  disabled={deletingId === cashflow.id}
+                                  disabled={isDeleting}
                                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                                 >
-                                  Delete
+                                  {isDeleting ? "Deleting..." : "Delete"}
                                 </AlertDialogAction>
                               </div>
                             </AlertDialogContent>

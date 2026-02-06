@@ -7,6 +7,7 @@ import DashboardPage from "./routes/protected-layout/dashboard";
 import CreatePage from "./routes/protected-layout/create";
 import UpdatePage from "./routes/protected-layout/update";
 import ProfilePage from "./routes/protected-layout/profile";
+import AuditLogPage from "./routes/protected-layout/audit-log";
 
 const router = createBrowserRouter([
   {
@@ -40,6 +41,10 @@ const router = createBrowserRouter([
       {
         path: "/profile",
         element: <ProfilePage />,
+      },
+      {
+        path: "/audit-log",
+        element: <AuditLogPage />,
       },
     ],
   },

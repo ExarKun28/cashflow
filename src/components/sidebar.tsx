@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { LogOut, Home, Plus, Edit, Menu, X, User } from "lucide-react";
+import { LogOut, Home, Plus, Edit, Menu, X, User, Shield } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -145,6 +145,16 @@ export function Sidebar() {
         >
           <Edit className="w-4 h-4" />
           {!isCollapsed && <span className="ml-2">Update</span>}
+        </Button>
+
+        <Button
+          onClick={() => navigate("/audit-log")}
+          variant={isActive("/audit-log") ? "default" : "ghost"}
+          className={`w-full ${isCollapsed ? "justify-center" : "justify-start"}`}
+          title={isCollapsed ? "Audit Log" : ""}
+        >
+          <Shield className="w-4 h-4" />
+          {!isCollapsed && <span className="ml-2">Audit Log</span>}
         </Button>
 
         <Button

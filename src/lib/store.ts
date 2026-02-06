@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
+import { createBlockchainTransaction } from '@/lib/blockchain'
 
 const INCOME_TABLE = 'income_transaction'
 const EXPENSE_TABLE = 'expense_transaction'
@@ -278,6 +279,22 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       table === INCOME_TABLE
         ? mapIncomeRow(inserted as IncomeRow)
         : mapExpenseRow(inserted as ExpenseRow)
+
+    // Also save to blockchain for transparency
+    try {
+      await createBlockchainTransaction({
+        smeId: String(branchId),
+        type: payload.category,
+        amount: payload.amount,
+        category: payload.name,
+        description: payload.description || '',
+        date: payload.date,
+      })
+      console.log('[CashflowStore] Blockchain transaction recorded')
+    } catch (blockchainError) {
+      console.warn('[CashflowStore] Blockchain save failed (non-critical):', blockchainError)
+      // Don't throw - Supabase save succeeded, blockchain is secondary
+    }
 
     set((state) => ({ cashflows: [normalized, ...state.cashflows] }))
     console.log('[CashflowStore] addCashflow success', { id: normalized.id })
