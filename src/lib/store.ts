@@ -16,6 +16,7 @@ type ProfileRow = {
 type IncomeRow = {
   id: number
   branch_id: number | null
+  user_id: string | null
   created_at: string | null
   amount: number | null
   income_type: string | null
@@ -25,6 +26,7 @@ type IncomeRow = {
 type ExpenseRow = {
   id: number
   branch_id: number | null
+  user_id: string | null
   created_at: string | null
   amount: number | null
   expense_category: string | null
@@ -154,9 +156,11 @@ const ensureProfile = async () => {
 const buildInsertPayload = (
   payload: CashflowInput,
   branchId: number,
+  userId: string,
 ): Record<string, unknown> => {
   const base = {
     branch_id: branchId,
+    user_id: userId,
     amount: payload.amount,
     created_at: normalizeDateInput(payload.date) ?? new Date().toISOString(),
     cashflow_id: null,
@@ -208,18 +212,18 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
     console.log('[CashflowStore] fetchCashflows start')
 
     try {
-      const { branchId } = await ensureProfile()
+      const { userId } = await ensureProfile()
 
       const [incomeResult, expenseResult] = await Promise.all([
         supabase
           .from(INCOME_TABLE)
           .select('*')
-          .eq('branch_id', branchId)
+          .eq('user_id', userId)
           .order('created_at', { ascending: false }),
         supabase
           .from(EXPENSE_TABLE)
           .select('*')
-          .eq('branch_id', branchId)
+          .eq('user_id', userId)
           .order('created_at', { ascending: false }),
       ])
 
@@ -253,9 +257,9 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
   addCashflow: async (payload) => {
     console.log('[CashflowStore] addCashflow start', payload)
 
-    const { branchId } = await ensureProfile()
+    const { branchId, userId } = await ensureProfile()
 
-    const insertPayload = buildInsertPayload(payload, branchId)
+    const insertPayload = buildInsertPayload(payload, branchId, userId)
     const table = payload.category === 'income' ? INCOME_TABLE : EXPENSE_TABLE
 
     const { data, error } = await supabase
@@ -283,7 +287,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
     // Also save to blockchain for transparency
     try {
       await createBlockchainTransaction({
-        smeId: String(branchId),
+        smeId: userId,
         type: payload.category,
         amount: payload.amount,
         category: payload.name,
@@ -293,7 +297,6 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       console.log('[CashflowStore] Blockchain transaction recorded')
     } catch (blockchainError) {
       console.warn('[CashflowStore] Blockchain save failed (non-critical):', blockchainError)
-      // Don't throw - Supabase save succeeded, blockchain is secondary
     }
 
     set((state) => ({ cashflows: [normalized, ...state.cashflows] }))
@@ -361,7 +364,6 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       throw new Error('Cashflow entry not found')
     }
 
-    // Delete from Supabase
     const { error } = await supabase
       .from(existing.sourceTable)
       .delete()
@@ -372,11 +374,9 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       throw new Error(error.message)
     }
 
-    // Also delete from blockchain
     try {
       const blockchainTxns = await getBlockchainTransactions()
       
-      // Find matching transaction by amount, category name, and type
       const matchingTx = blockchainTxns.find(tx => 
         tx.amount === existing.amount && 
         tx.category === existing.name &&
@@ -391,7 +391,6 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       }
     } catch (blockchainError) {
       console.warn('[CashflowStore] Blockchain delete failed (non-critical):', blockchainError)
-      // Don't throw - Supabase delete succeeded, blockchain is secondary
     }
 
     set((state) => ({
