@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import { createBlockchainTransaction } from '@/lib/blockchain'
+import { createBlockchainTransaction, deleteBlockchainTransaction, getBlockchainTransactions } from '@/lib/blockchain'
 
 const INCOME_TABLE = 'income_transaction'
 const EXPENSE_TABLE = 'expense_transaction'
@@ -361,6 +361,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       throw new Error('Cashflow entry not found')
     }
 
+    // Delete from Supabase
     const { error } = await supabase
       .from(existing.sourceTable)
       .delete()
@@ -369,6 +370,28 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
     if (error) {
       console.error('[CashflowStore] deleteCashflow error', error)
       throw new Error(error.message)
+    }
+
+    // Also delete from blockchain
+    try {
+      const blockchainTxns = await getBlockchainTransactions()
+      
+      // Find matching transaction by amount, category name, and type
+      const matchingTx = blockchainTxns.find(tx => 
+        tx.amount === existing.amount && 
+        tx.category === existing.name &&
+        tx.type === existing.category
+      )
+      
+      if (matchingTx) {
+        await deleteBlockchainTransaction(matchingTx.id)
+        console.log('[CashflowStore] Blockchain transaction deleted:', matchingTx.id)
+      } else {
+        console.warn('[CashflowStore] No matching blockchain transaction found')
+      }
+    } catch (blockchainError) {
+      console.warn('[CashflowStore] Blockchain delete failed (non-critical):', blockchainError)
+      // Don't throw - Supabase delete succeeded, blockchain is secondary
     }
 
     set((state) => ({
