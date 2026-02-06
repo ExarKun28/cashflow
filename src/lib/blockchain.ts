@@ -2,7 +2,7 @@ const BLOCKCHAIN_API_URL = import.meta.env.VITE_BLOCKCHAIN_API_URL;
 
 export interface BlockchainTransaction {
   id: string;
-  smeId: string;
+  smeName: string;
   type: 'income' | 'expense';
   amount: number;
   category: string;
@@ -10,7 +10,7 @@ export interface BlockchainTransaction {
   date: string;
   createdAt: string;
   updatedAt: string;
-  blockchainStatus: string;
+  blockchainStatus?: string;
 }
 
 export interface CashflowSummary {
