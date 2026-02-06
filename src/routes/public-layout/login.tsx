@@ -61,7 +61,7 @@ export default function LoginPage() {
       <CardHeader className="space-y-4">
         <div className="flex justify-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-primary">
-           <img src="/CASH_FLOW_MONITORING_SYSTEM_DDD.png" alt="Logo" className="h-12 w-12" />
+           <img src="/CASH FLOW MONITORING SYSTEM DDD.png" alt="Logo" className="h-12 w-12" />
           </div>
         </div>
 
