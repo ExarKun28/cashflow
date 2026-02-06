@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getBlockchainTransactions, checkBlockchainHealth, type BlockchainTransaction } from '@/lib/blockchain'
 import { Shield, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { supabase } from '@/lib/supabase'
 
 export default function AuditLogPage() {
   const [transactions, setTransactions] = useState<BlockchainTransaction[]>([])
@@ -14,11 +15,20 @@ export default function AuditLogPage() {
   const fetchData = async () => {
     setIsLoading(true)
     try {
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser()
+      
       const health = await checkBlockchainHealth()
       setIsHealthy(health.status === 'OK')
 
-      const data = await getBlockchainTransactions()
-      setTransactions(data)
+      const allTransactions = await getBlockchainTransactions()
+      
+      // Filter transactions by current user's ID (stored in smeName)
+      const userTransactions = user 
+        ? allTransactions.filter(tx => tx.smeName === user.id)
+        : []
+      
+      setTransactions(userTransactions)
       setLastUpdated(new Date())
     } catch (error) {
       console.error('Failed to fetch blockchain data:', error)
