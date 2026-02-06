@@ -26,6 +26,7 @@ export default function LoginPage() {
     async function checkSession() {
       const { data } = await supabase.auth.getSession();
       if (!active) return;
+
       if (data.session?.access_token) {
         localStorage.setItem("sb_access_token", data.session.access_token);
         navigate("/dashboard", { replace: true });
@@ -42,6 +43,7 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+
     try {
       const token = await loginUser({ email, password });
       localStorage.setItem("sb_access_token", token);
@@ -59,9 +61,10 @@ export default function LoginPage() {
       <CardHeader className="space-y-4">
         <div className="flex justify-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-primary">
-            <img src="/abstract-logo.png" alt="Logo" className="h-12 w-12" />
+           <img src="/CASH_FLOW_MONITORING_SYSTEM_DDD.png" alt="Logo" className="h-12 w-12" />
           </div>
         </div>
+
         <div className="space-y-2 text-center">
           <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
           <CardDescription>
@@ -69,6 +72,7 @@ export default function LoginPage() {
           </CardDescription>
         </div>
       </CardHeader>
+
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -82,6 +86,7 @@ export default function LoginPage() {
               required
             />
           </div>
+
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="password">Password</Label>
@@ -92,6 +97,7 @@ export default function LoginPage() {
                 Forgot password?
               </a>
             </div>
+
             <Input
               id="password"
               type="password"
@@ -101,11 +107,13 @@ export default function LoginPage() {
               required
             />
           </div>
+
           <Button type="submit" className="w-full" disabled={loading}>
-            Sign in
+            {loading ? "Signing in..." : "Sign in"}
           </Button>
         </form>
       </CardContent>
+
       <CardFooter className="flex justify-center">
         <p className="text-sm text-muted-foreground">
           Don&apos;t have an account?{" "}
