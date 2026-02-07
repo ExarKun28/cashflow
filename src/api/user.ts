@@ -1,11 +1,10 @@
 import { supabase } from "@/lib/supabase";
 
-export type RegisterUserPayload = {
+export type RegisterBusinessPayload = {
+	businessName: string;
 	email: string;
 	password: string;
 	fullName: string;
-	role?: string | null;
-	branchId?: number | null;
 };
 
 export type LoginUserPayload = {
@@ -13,9 +12,10 @@ export type LoginUserPayload = {
 	password: string;
 };
 
-export async function registerUser(
-	payload: RegisterUserPayload
+export async function registerBusiness(
+	payload: RegisterBusinessPayload
 ): Promise<string> {
+	// Step 1: Create auth user
 	const { data: authData, error: authError } = await supabase.auth.signUp({
 		email: payload.email,
 		password: payload.password,
@@ -30,6 +30,7 @@ export async function registerUser(
 		throw new Error("Unable to create auth user");
 	}
 
+	// Step 2: Sign in to get session
 	let session = authData.session;
 	if (!session) {
 		const { data: signInData, error: signInError } =
@@ -48,23 +49,34 @@ export async function registerUser(
 		throw new Error("Unable to retrieve session token");
 	}
 
-	const profileUpdates: Record<string, unknown> = {
-		full_name: payload.fullName,
-		branch_id: payload.branchId ?? 2,
-	};
-	if (payload.role !== undefined) {
-		profileUpdates.role = payload.role;
+	// Step 3: Create organization
+	const { data: orgData, error: orgError } = await supabase
+		.from("organizations")
+		.insert({
+			name: payload.businessName,
+			created_by: authUser.id,
+		})
+		.select()
+		.single();
+
+	if (orgError) {
+		throw new Error("Failed to create organization: " + orgError.message);
 	}
 
-	if (Object.keys(profileUpdates).length > 0) {
-		const { error: profileError } = await supabase
-			.from("profiles")
-			.update(profileUpdates)
-			.eq("id", authUser.id);
+	// Step 4: Update profile - set as admin and link to organization
+	const { error: profileError } = await supabase
+		.from("profiles")
+		.update({
+			full_name: payload.fullName,
+			email: payload.email,
+			role: "admin",
+			org_id: orgData.id,
+			branch_id: null,
+		})
+		.eq("id", authUser.id);
 
-		if (profileError) {
-			throw new Error(profileError.message);
-		}
+	if (profileError) {
+		throw new Error("Failed to update profile: " + profileError.message);
 	}
 
 	return accessToken;

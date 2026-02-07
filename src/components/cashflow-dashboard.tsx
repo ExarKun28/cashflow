@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useCashflowStore } from "@/lib/store";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Trash2, Edit } from "lucide-react";
@@ -32,12 +33,20 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 
+type Branch = {
+  id: number;
+  name: string;
+};
+
 export function CashflowDashboard() {
-  const { cashflows, deleteCashflow, fetchCashflows, isLoading, error } =
+  const { cashflows, deleteCashflow, fetchCashflows, isLoading, error, userRole } =
     useCashflowStore();
   const navigate = useNavigate();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [branches, setBranches] = useState<Branch[]>([]);
+
+  const isAdmin = userRole === 'admin';
 
   const INCOME_COLOR = "#16a34a";
   const EXPENSE_COLOR = "#dc2626";
@@ -85,17 +94,53 @@ export function CashflowDashboard() {
     [cashflows],
   );
 
+  // Get branch name from ID
+  const getBranchName = (branchId: number | null) => {
+    if (!branchId) return "Unknown";
+    const branch = branches.find((b) => b.id === branchId);
+    return branch?.name || `Branch ${branchId}`;
+  };
+
   useEffect(() => {
     let active = true;
 
-    fetchCashflows().catch((fetchError) => {
-      if (!active) return;
-      const description =
-        fetchError instanceof Error
-          ? fetchError.message
-          : "Unable to load cashflows.";
-      toast.error("Error", { description });
-    });
+    const loadData = async () => {
+      try {
+        await fetchCashflows();
+        
+        // If admin, fetch branch names
+        if (active) {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('org_id, role')
+              .eq('id', user.id)
+              .single();
+            
+            if (profile?.role === 'admin' && profile?.org_id) {
+              const { data: branchData } = await supabase
+                .from('branches')
+                .select('id, name')
+                .eq('org_id', profile.org_id);
+              
+              if (branchData && active) {
+                setBranches(branchData);
+              }
+            }
+          }
+        }
+      } catch (fetchError) {
+        if (!active) return;
+        const description =
+          fetchError instanceof Error
+            ? fetchError.message
+            : "Unable to load cashflows.";
+        toast.error("Error", { description });
+      }
+    };
+
+    loadData();
 
     return () => {
       active = false;
@@ -143,8 +188,17 @@ export function CashflowDashboard() {
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="mb-8">
-        <h1 className="text-4xl font-bold text-foreground mb-2">Dashboard</h1>
-        <p className="text-muted-foreground">Overview of your cashflows</p>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-4xl font-bold text-foreground">Dashboard</h1>
+          {isAdmin && (
+            <span className="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100 rounded">
+              Admin View
+            </span>
+          )}
+        </div>
+        <p className="text-muted-foreground">
+          {isAdmin ? "Overview of all organization cashflows" : "Overview of your cashflows"}
+        </p>
       </div>
 
       {error && (
@@ -306,6 +360,11 @@ export function CashflowDashboard() {
                     <th className="text-left py-3 px-4 font-semibold text-foreground">
                       Name
                     </th>
+                    {isAdmin && (
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">
+                        Branch
+                      </th>
+                    )}
                     <th className="text-left py-3 px-4 font-semibold text-foreground">
                       Category
                     </th>
@@ -332,6 +391,13 @@ export function CashflowDashboard() {
                       <td className="py-3 px-4 text-foreground">
                         {cashflow.name}
                       </td>
+                      {isAdmin && (
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-1 rounded text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
+                            {getBranchName(cashflow.branchId)}
+                          </span>
+                        </td>
+                      )}
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-1 rounded text-sm font-medium ${

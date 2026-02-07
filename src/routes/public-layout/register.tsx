@@ -11,23 +11,36 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { registerUser } from "@/api/user";
+import { registerBusiness } from "@/api/user";
+import { Building2 } from "lucide-react";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const [businessName, setBusinessName] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     if (password !== confirmPassword) {
       alert("Passwords do not match");
       return;
     }
+
+    if (businessName.trim().length < 2) {
+      alert("Please enter a valid business name");
+      return;
+    }
+
+    setIsLoading(true);
+    
     try {
-      const token = await registerUser({
+      const token = await registerBusiness({
+        businessName,
         fullName,
         email,
         password,
@@ -37,6 +50,8 @@ export default function RegisterPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed";
       alert(message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -45,40 +60,70 @@ export default function RegisterPage() {
       <CardHeader className="space-y-4">
         <div className="flex justify-center">
           <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-primary">
-            <img src="/abstract-logo.png" alt="Logo" className="h-12 w-12" />
+            <Building2 className="h-10 w-10 text-primary-foreground" />
           </div>
         </div>
         <div className="space-y-2 text-center">
           <CardTitle className="text-2xl font-bold">
-            Create an account
+            Register Your Business
           </CardTitle>
-          <CardDescription>Enter your details to get started</CardDescription>
+          <CardDescription>
+            Create your business account to start managing cash flow
+          </CardDescription>
         </div>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="register-full-name">Full name</Label>
+            <Label htmlFor="business-name">Business Name</Label>
+            <Input
+              id="business-name"
+              type="text"
+              placeholder="DDD Enterprise"
+              value={businessName}
+              onChange={(e) => setBusinessName(e.target.value)}
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              This is your company or organization name
+            </p>
+          </div>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-card px-2 text-muted-foreground">
+                Admin Account
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="register-full-name">Your Full Name</Label>
             <Input
               id="register-full-name"
               type="text"
-              placeholder="Jane Doe"
+              placeholder="Juan Dela Cruz"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               required
             />
           </div>
+
           <div className="space-y-2">
             <Label htmlFor="register-email">Email</Label>
             <Input
               id="register-email"
               type="email"
-              placeholder="name@example.com"
+              placeholder="owner@business.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
             />
           </div>
+
           <div className="space-y-2">
             <Label htmlFor="register-password">Password</Label>
             <Input
@@ -90,6 +135,7 @@ export default function RegisterPage() {
               required
             />
           </div>
+
           <div className="space-y-2">
             <Label htmlFor="confirm-password">Confirm Password</Label>
             <Input
@@ -101,18 +147,16 @@ export default function RegisterPage() {
               required
             />
           </div>
-          <Button type="submit" className="w-full">
-            Create account
+
+          <Button type="submit" className="w-full" disabled={isLoading}>
+            {isLoading ? "Creating Business..." : "Create Business Account"}
           </Button>
         </form>
       </CardContent>
       <CardFooter className="flex justify-center">
         <p className="text-sm text-muted-foreground">
           Already have an account?{" "}
-          <a
-            href="/"
-            className="font-medium text-foreground hover:underline"
-          >
+          <a href="/" className="font-medium text-foreground hover:underline">
             Sign in
           </a>
         </p>

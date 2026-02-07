@@ -2,15 +2,44 @@ import { useEffect, useState } from 'react'
 import { Sidebar } from '@/components/sidebar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getBlockchainTransactions, checkBlockchainHealth, type BlockchainTransaction } from '@/lib/blockchain'
-import { Shield, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Shield, CheckCircle, XCircle, RefreshCw, Building2, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { supabase } from '@/lib/supabase'
+
+type Branch = {
+  id: number;
+  name: string;
+};
 
 export default function AuditLogPage() {
   const [transactions, setTransactions] = useState<BlockchainTransaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isHealthy, setIsHealthy] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [userRole, setUserRole] = useState<string | null>(null)
+  const [orgName, setOrgName] = useState<string | null>(null)
+  const [branches, setBranches] = useState<Branch[]>([])
+
+  const isAdmin = userRole === 'admin'
+
+  // Get branch name from smeName (format: "orgId-branchId")
+  const getBranchName = (smeName: string) => {
+    if (!smeName) return "Unknown"
+    
+    // Check if it's in the new format (orgId-branchId)
+    const parts = smeName.split('-')
+    if (parts.length >= 2) {
+      // The last part should be the branchId
+      const branchId = parseInt(parts[parts.length - 1], 10)
+      if (!isNaN(branchId)) {
+        const branch = branches.find((b) => b.id === branchId)
+        return branch?.name || `Branch ${branchId}`
+      }
+    }
+    
+    // Old format or unknown - return as is
+    return "Unknown"
+  }
 
   const fetchData = async () => {
     setIsLoading(true)
@@ -18,17 +47,109 @@ export default function AuditLogPage() {
       // Get current user
       const { data: { user } } = await supabase.auth.getUser()
       
+      if (!user) {
+        setIsLoading(false)
+        return
+      }
+
+      // Get user's profile with role and org_id
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role, org_id')
+        .eq('id', user.id)
+        .single()
+
+      const role = profile?.role || 'user'
+      const orgId = profile?.org_id
+      setUserRole(role)
+
+      // Get organization name and branches if admin
+      if (role === 'admin' && orgId) {
+        const { data: org } = await supabase
+          .from('organizations')
+          .select('name')
+          .eq('id', orgId)
+          .single()
+        setOrgName(org?.name || null)
+
+        // Fetch branches for admin
+        const { data: branchData } = await supabase
+          .from('branches')
+          .select('id, name')
+          .eq('org_id', orgId)
+        
+        if (branchData) {
+          setBranches(branchData)
+        }
+      }
+
+      // Check blockchain health
       const health = await checkBlockchainHealth()
       setIsHealthy(health.status === 'OK')
 
+      // Get all blockchain transactions
       const allTransactions = await getBlockchainTransactions()
       
-      // Filter transactions by current user's ID (stored in smeName)
-      const userTransactions = user 
-        ? allTransactions.filter(tx => tx.smeName === user.id)
-        : []
+      let filteredTransactions: BlockchainTransaction[] = []
+
+      if (role === 'admin' && orgId) {
+        // Admin: Get all branches in the organization
+        const { data: orgBranches } = await supabase
+          .from('branches')
+          .select('id')
+          .eq('org_id', orgId)
+
+        const branchIds = orgBranches?.map(b => b.id) || []
+        
+        // Also get all user IDs in the org (for old format compatibility)
+        const { data: orgUsers } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('org_id', orgId)
+
+        const orgUserIds = orgUsers?.map(u => u.id) || []
+        
+        // Filter transactions that belong to any branch in the organization
+        // New format: orgId-branchId
+        // Old format: orgId or userId
+        filteredTransactions = allTransactions.filter(tx => 
+          branchIds.some(branchId => tx.smeName === `${orgId}-${branchId}`) ||
+          tx.smeName === orgId ||
+          orgUserIds.includes(tx.smeName)
+        )
+        
+        console.log('[AuditLog] Admin mode: showing all org transactions', {
+          orgId,
+          branchCount: branchIds.length,
+          userCount: orgUserIds.length,
+          transactionCount: filteredTransactions.length
+        })
+      } else {
+        // Regular user: Only show their own branch's transactions
+        const { data: userProfile } = await supabase
+          .from('profiles')
+          .select('branch_id')
+          .eq('id', user.id)
+          .single()
+
+        const userBranchId = userProfile?.branch_id
+
+        // Filter by orgId-branchId combination (new format)
+        // Also check old formats for backwards compatibility
+         filteredTransactions = allTransactions.filter(tx => 
+         tx.smeName === `${orgId}-${userBranchId}` ||
+         tx.smeName === user.id
+       ) 
+
+        console.log('[AuditLog] User mode: showing branch transactions only', {
+          userId: user.id,
+          orgId: orgId,
+          branchId: userBranchId,
+          transactionCount: filteredTransactions.length
+        })
+      }
       
-      setTransactions(userTransactions)
+      setTransactions(filteredTransactions)
       setLastUpdated(new Date())
     } catch (error) {
       console.error('Failed to fetch blockchain data:', error)
@@ -87,6 +208,22 @@ export default function AuditLogPage() {
               <p className="text-muted-foreground">
                 Immutable transaction records on Hyperledger Fabric
               </p>
+              {/* Show role indicator */}
+              {userRole && (
+                <div className="flex items-center gap-2 mt-2">
+                  {userRole === 'admin' ? (
+                    <span className="inline-flex items-center gap-1 text-sm bg-yellow-500/20 text-yellow-500 px-2 py-1 rounded">
+                      <Building2 className="h-3 w-3" />
+                      Admin View - Showing all {orgName || 'organization'} transactions
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-sm bg-blue-500/20 text-blue-500 px-2 py-1 rounded">
+                      <User className="h-3 w-3" />
+                      User View - Showing your transactions only
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <Button onClick={fetchData} disabled={isLoading} variant="outline">
               <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
@@ -163,6 +300,11 @@ export default function AuditLogPage() {
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
                 Blockchain Transactions
+                {userRole === 'admin' && (
+                  <span className="text-sm font-normal text-muted-foreground">
+                    (All organization transactions)
+                  </span>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -178,6 +320,9 @@ export default function AuditLogPage() {
                     <thead>
                       <tr className="border-b">
                         <th className="text-left py-3 px-2">Transaction ID</th>
+                        {isAdmin && (
+                          <th className="text-left py-3 px-2">Branch</th>
+                        )}
                         <th className="text-left py-3 px-2">Type</th>
                         <th className="text-left py-3 px-2">Category</th>
                         <th className="text-left py-3 px-2">Amount</th>
@@ -190,6 +335,13 @@ export default function AuditLogPage() {
                       {transactions.map((tx) => (
                         <tr key={tx.id} className="border-b hover:bg-muted/50">
                           <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
+                          {isAdmin && (
+                            <td className="py-3 px-2">
+                              <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
+                                {getBranchName(tx.smeName)}
+                              </span>
+                            </td>
+                          )}
                           <td className="py-3 px-2">
                             <span className={`px-2 py-1 rounded text-xs font-medium ${
                               tx.type === 'income' 

@@ -11,12 +11,15 @@ type SourceTable = typeof INCOME_TABLE | typeof EXPENSE_TABLE
 type ProfileRow = {
   id: string
   branch_id: number | null
+  org_id: string | null
+  role: string | null
 }
 
 type IncomeRow = {
   id: number
   branch_id: number | null
   user_id: string | null
+  org_id: string | null
   created_at: string | null
   amount: number | null
   income_type: string | null
@@ -27,6 +30,7 @@ type ExpenseRow = {
   id: number
   branch_id: number | null
   user_id: string | null
+  org_id: string | null
   created_at: string | null
   amount: number | null
   expense_category: string | null
@@ -45,6 +49,7 @@ export interface Cashflow {
   description: string | null
   branchId: number | null
   cashflowId: number | null
+  orgId: string | null
 }
 
 export type CashflowInput = {
@@ -59,6 +64,7 @@ interface CashflowStore {
   cashflows: Cashflow[]
   isLoading: boolean
   error: string | null
+  userRole: string | null
   fetchCashflows: () => Promise<void>
   addCashflow: (payload: CashflowInput) => Promise<Cashflow | null>
   updateCashflow: (
@@ -105,6 +111,7 @@ const mapIncomeRow = (row: IncomeRow): Cashflow => ({
   description: null,
   branchId: row.branch_id ?? null,
   cashflowId: row.cashflow_id ?? null,
+  orgId: row.org_id ?? null,
 })
 
 const mapExpenseRow = (row: ExpenseRow): Cashflow => ({
@@ -118,6 +125,7 @@ const mapExpenseRow = (row: ExpenseRow): Cashflow => ({
   description: row.description ?? null,
   branchId: row.branch_id ?? null,
   cashflowId: row.cashflow_id ?? null,
+  orgId: row.org_id ?? null,
 })
 
 const ensureProfile = async () => {
@@ -136,7 +144,7 @@ const ensureProfile = async () => {
 
   const { data, error } = await supabase
     .from(PROFILE_TABLE)
-    .select('id, branch_id')
+    .select('id, branch_id, org_id, role')
     .eq('id', user.id)
     .single()
 
@@ -146,21 +154,33 @@ const ensureProfile = async () => {
 
   const profile = (data ?? null) as ProfileRow | null
 
-  if (!profile?.branch_id) {
+  if (!profile) {
+    throw new Error('Profile not found')
+  }
+
+  // Admin doesn't need branch assignment, but regular users do
+  if (profile.role !== 'admin' && !profile.branch_id) {
     throw new Error('Your profile is missing a branch assignment')
   }
 
-  return { userId: user.id, branchId: profile.branch_id }
+  return { 
+    userId: user.id, 
+    branchId: profile.branch_id,
+    orgId: profile.org_id,
+    role: profile.role || 'user'
+  }
 }
 
 const buildInsertPayload = (
   payload: CashflowInput,
-  branchId: number,
+  branchId: number | null,
   userId: string,
+  orgId: string | null,
 ): Record<string, unknown> => {
   const base = {
     branch_id: branchId,
     user_id: userId,
+    org_id: orgId,
     amount: payload.amount,
     created_at: normalizeDateInput(payload.date) ?? new Date().toISOString(),
     cashflow_id: null,
@@ -207,24 +227,47 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
   cashflows: [],
   isLoading: false,
   error: null,
+  userRole: null,
   fetchCashflows: async () => {
     set({ isLoading: true, error: null })
     console.log('[CashflowStore] fetchCashflows start')
 
     try {
-      const { userId } = await ensureProfile()
+      const { branchId, orgId, role } = await ensureProfile()
+      
+      set({ userRole: role })
+
+      let incomeQuery = supabase
+        .from(INCOME_TABLE)
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      let expenseQuery = supabase
+        .from(EXPENSE_TABLE)
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      // Admin sees all transactions in their organization
+      // User sees only transactions from their branch
+      if (role === 'admin') {
+        // Admin: filter by org_id
+        if (orgId) {
+          incomeQuery = incomeQuery.eq('org_id', orgId)
+          expenseQuery = expenseQuery.eq('org_id', orgId)
+        }
+        console.log('[CashflowStore] Admin mode: fetching all org transactions')
+      } else {
+        // User: filter by branch_id
+        if (branchId) {
+          incomeQuery = incomeQuery.eq('branch_id', branchId)
+          expenseQuery = expenseQuery.eq('branch_id', branchId)
+        }
+        console.log('[CashflowStore] User mode: fetching branch transactions only')
+      }
 
       const [incomeResult, expenseResult] = await Promise.all([
-        supabase
-          .from(INCOME_TABLE)
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false }),
-        supabase
-          .from(EXPENSE_TABLE)
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false }),
+        incomeQuery,
+        expenseQuery,
       ])
 
       if (incomeResult.error) {
@@ -246,6 +289,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       console.log('[CashflowStore] fetchCashflows success', {
         income: incomeEntries.length,
         expense: expenseEntries.length,
+        role,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
@@ -257,9 +301,11 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
   addCashflow: async (payload) => {
     console.log('[CashflowStore] addCashflow start', payload)
 
-    const { branchId, userId } = await ensureProfile()
+    const { branchId, userId, orgId } = await ensureProfile() 
 
-    const insertPayload = buildInsertPayload(payload, branchId, userId)
+    console.log('[CashflowStore] Profile data:', { branchId, userId, orgId })  // ADD THIS LINE
+
+    const insertPayload = buildInsertPayload(payload, branchId, userId, orgId)
     const table = payload.category === 'income' ? INCOME_TABLE : EXPENSE_TABLE
 
     const { data, error } = await supabase
@@ -271,8 +317,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
     if (error) {
       console.error('[CashflowStore] addCashflow error', error)
       throw new Error(error.message)
-    }
-
+    } 
     const inserted = (data ?? null) as IncomeRow | ExpenseRow | null
 
     if (!inserted) {
@@ -287,13 +332,13 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
     // Also save to blockchain for transparency
     try {
       await createBlockchainTransaction({
-        smeId: userId,
-        type: payload.category,
-        amount: payload.amount,
-        category: payload.name,
-        description: payload.description || '',
-        date: payload.date,
-      })
+     smeId: `${orgId}-${branchId}`,
+     type: payload.category,
+     amount: payload.amount,
+     category: payload.name,
+     description: payload.description || '',
+      date: payload.date,
+                                       })
       console.log('[CashflowStore] Blockchain transaction recorded')
     } catch (blockchainError) {
       console.warn('[CashflowStore] Blockchain save failed (non-critical):', blockchainError)

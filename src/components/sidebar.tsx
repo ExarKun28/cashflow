@@ -172,15 +172,15 @@ export function Sidebar() {
         <ThemeToggle collapsed={isCollapsed} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              className={`w-full ${isCollapsed ? "justify-center p-2" : "justify-start"}`}
-            >
-              <Avatar className="w-6 h-6 mr-2">
-                <AvatarFallback className="text-xs">{initials}</AvatarFallback>
-              </Avatar>
-              {!isCollapsed && <span>{displayName}</span>}
-            </Button>
+           <Button
+             variant="ghost"
+             className={`w-full ${isCollapsed ? "justify-center p-2" : "justify-start"} overflow-hidden`}
+          >
+            <Avatar className="w-6 h-6 mr-2 flex-shrink-0">
+           <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+            </Avatar>
+            {!isCollapsed && <span className="truncate max-w-[140px]">{displayName}</span>}
+              </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align={isCollapsed ? "start" : "end"}
