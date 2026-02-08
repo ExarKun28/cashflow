@@ -303,7 +303,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
 
     const { branchId, userId, orgId } = await ensureProfile() 
 
-    console.log('[CashflowStore] Profile data:', { branchId, userId, orgId })  // ADD THIS LINE
+    console.log('[CashflowStore] Profile data:', { branchId, userId, orgId })
 
     const insertPayload = buildInsertPayload(payload, branchId, userId, orgId)
     const table = payload.category === 'income' ? INCOME_TABLE : EXPENSE_TABLE
@@ -332,13 +332,13 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
     // Also save to blockchain for transparency
     try {
       await createBlockchainTransaction({
-     smeId: `${orgId}-${branchId}`,
-     type: payload.category,
-     amount: payload.amount,
-     category: payload.name,
-     description: payload.description || '',
-      date: payload.date,
-                                       })
+        smeId: `${orgId}-${branchId}`,
+        type: payload.category,
+        amount: payload.amount,
+        category: payload.name,
+        description: payload.description || '',
+        date: payload.date,
+      })
       console.log('[CashflowStore] Blockchain transaction recorded')
     } catch (blockchainError) {
       console.warn('[CashflowStore] Blockchain save failed (non-critical):', blockchainError)
@@ -393,6 +393,41 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       existing.sourceTable === INCOME_TABLE
         ? mapIncomeRow(updatedRow as IncomeRow)
         : mapExpenseRow(updatedRow as ExpenseRow)
+
+    // Update blockchain: delete old record and create new one
+    try {
+      const blockchainTxns = await getBlockchainTransactions()
+      
+      // Find matching transaction by original values
+      const matchingTx = blockchainTxns.find(tx => 
+        tx.amount === existing.amount && 
+        tx.category === existing.name &&
+        tx.type === existing.category
+      )
+      
+      if (matchingTx) {
+        // Delete old blockchain record
+        await deleteBlockchainTransaction(matchingTx.id)
+        console.log('[CashflowStore] Old blockchain transaction deleted:', matchingTx.id)
+      } else {
+        console.warn('[CashflowStore] No matching blockchain transaction found to update')
+      }
+
+      // Create new blockchain record with updated values
+      const { branchId, orgId } = await ensureProfile()
+      
+      await createBlockchainTransaction({
+        smeId: `${orgId}-${branchId}`,
+        type: normalized.category,
+        amount: normalized.amount,
+        category: normalized.name,
+        description: normalized.description || '',
+        date: normalized.date,
+      })
+      console.log('[CashflowStore] New blockchain transaction created with updated values')
+    } catch (blockchainError) {
+      console.warn('[CashflowStore] Blockchain update failed (non-critical):', blockchainError)
+    }
 
     set((state) => ({
       cashflows: state.cashflows.map((cf) => (cf.id === id ? normalized : cf)),
