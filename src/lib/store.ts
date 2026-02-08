@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { supabase } from '@/lib/supabase'
-import { createBlockchainTransaction, deleteBlockchainTransaction, getBlockchainTransactions } from '@/lib/blockchain'
+import { createBlockchainTransaction, getBlockchainTransactions } from '@/lib/blockchain'
 
 const INCOME_TABLE = 'income_transaction'
 const EXPENSE_TABLE = 'expense_transaction'
@@ -223,6 +223,32 @@ const buildUpdatePayload = (
   return updates
 }
 
+// Helper function to build amendment description
+const buildAmendmentDescription = (
+  original: Cashflow,
+  updated: Cashflow,
+  originalTxId?: string
+): string => {
+  const changes: string[] = []
+  
+  if (original.amount !== updated.amount) {
+    changes.push(`Amount: ₱${original.amount.toLocaleString()} → ₱${updated.amount.toLocaleString()}`)
+  }
+  if (original.name !== updated.name) {
+    changes.push(`Category: ${original.name} → ${updated.name}`)
+  }
+  if (original.date !== updated.date) {
+    const oldDate = new Date(original.date).toLocaleDateString()
+    const newDate = new Date(updated.date).toLocaleDateString()
+    changes.push(`Date: ${oldDate} → ${newDate}`)
+  }
+  
+  const changesText = changes.length > 0 ? changes.join(' | ') : 'No value changes'
+  const refText = originalTxId ? ` | Ref: ${originalTxId}` : ''
+  
+  return `[AMENDMENT] ${changesText}${refText}`
+}
+
 export const useCashflowStore = create<CashflowStore>((set, get) => ({
   cashflows: [],
   isLoading: false,
@@ -394,39 +420,40 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
         ? mapIncomeRow(updatedRow as IncomeRow)
         : mapExpenseRow(updatedRow as ExpenseRow)
 
-    // Update blockchain: delete old record and create new one
+    // Create amendment record on blockchain (keeps original, adds amendment)
     try {
       const blockchainTxns = await getBlockchainTransactions()
       
-      // Find matching transaction by original values
-      const matchingTx = blockchainTxns.find(tx => 
+      // Find the original transaction to get its ID for reference
+      const originalTx = blockchainTxns.find(tx => 
         tx.amount === existing.amount && 
         tx.category === existing.name &&
         tx.type === existing.category
       )
       
-      if (matchingTx) {
-        // Delete old blockchain record
-        await deleteBlockchainTransaction(matchingTx.id)
-        console.log('[CashflowStore] Old blockchain transaction deleted:', matchingTx.id)
-      } else {
-        console.warn('[CashflowStore] No matching blockchain transaction found to update')
-      }
+      // Build amendment description showing what changed
+      const amendmentDescription = buildAmendmentDescription(
+        existing, 
+        normalized, 
+        originalTx?.id
+      )
 
-      // Create new blockchain record with updated values
+      // Get profile for smeId
       const { branchId, orgId } = await ensureProfile()
       
+      // Create amendment record with updated values
       await createBlockchainTransaction({
         smeId: `${orgId}-${branchId}`,
         type: normalized.category,
         amount: normalized.amount,
         category: normalized.name,
-        description: normalized.description || '',
+        description: amendmentDescription,
         date: normalized.date,
       })
-      console.log('[CashflowStore] New blockchain transaction created with updated values')
+      
+      console.log('[CashflowStore] Blockchain amendment record created:', amendmentDescription)
     } catch (blockchainError) {
-      console.warn('[CashflowStore] Blockchain update failed (non-critical):', blockchainError)
+      console.warn('[CashflowStore] Blockchain amendment failed (non-critical):', blockchainError)
     }
 
     set((state) => ({
@@ -454,23 +481,31 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       throw new Error(error.message)
     }
 
+    // Create deletion record on blockchain (for audit trail)
     try {
       const blockchainTxns = await getBlockchainTransactions()
       
-      const matchingTx = blockchainTxns.find(tx => 
+      const originalTx = blockchainTxns.find(tx => 
         tx.amount === existing.amount && 
         tx.category === existing.name &&
         tx.type === existing.category
       )
+
+      const { branchId, orgId } = await ensureProfile()
       
-      if (matchingTx) {
-        await deleteBlockchainTransaction(matchingTx.id)
-        console.log('[CashflowStore] Blockchain transaction deleted:', matchingTx.id)
-      } else {
-        console.warn('[CashflowStore] No matching blockchain transaction found')
-      }
+      // Create a deletion record instead of actually deleting
+      await createBlockchainTransaction({
+        smeId: `${orgId}-${branchId}`,
+        type: existing.category,
+        amount: 0, // Zero amount for deletion record
+        category: existing.name,
+        description: `[DELETED] Original amount: ₱${existing.amount.toLocaleString()} | Ref: ${originalTx?.id || 'unknown'}`,
+        date: new Date().toISOString(),
+      })
+      
+      console.log('[CashflowStore] Blockchain deletion record created')
     } catch (blockchainError) {
-      console.warn('[CashflowStore] Blockchain delete failed (non-critical):', blockchainError)
+      console.warn('[CashflowStore] Blockchain deletion record failed (non-critical):', blockchainError)
     }
 
     set((state) => ({

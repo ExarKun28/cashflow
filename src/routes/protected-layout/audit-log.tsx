@@ -316,59 +316,69 @@ export default function AuditLogPage() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left py-3 px-2">Transaction ID</th>
-                        {isAdmin && (
-                          <th className="text-left py-3 px-2">Branch</th>
-                        )}
-                        <th className="text-left py-3 px-2">Type</th>
-                        <th className="text-left py-3 px-2">Category</th>
-                        <th className="text-left py-3 px-2">Amount</th>
-                        <th className="text-left py-3 px-2">Date</th>
-                        <th className="text-left py-3 px-2">Timestamp</th>
-                        <th className="text-left py-3 px-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {transactions.map((tx) => (
-                        <tr key={tx.id} className="border-b hover:bg-muted/50">
-                          <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
-                          {isAdmin && (
-                            <td className="py-3 px-2">
-                              <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
-                                {getBranchName(tx.smeName)}
-                              </span>
-                            </td>
-                          )}
-                          <td className="py-3 px-2">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${
-                              tx.type === 'income' 
-                                ? 'bg-green-500/20 text-green-500' 
-                                : 'bg-red-500/20 text-red-500'
-                            }`}>
-                              {tx.type}
-                            </span>
-                          </td>
-                          <td className="py-3 px-2">{tx.category}</td>
-                          <td className={`py-3 px-2 font-medium ${
-                            tx.type === 'income' ? 'text-green-500' : 'text-red-500'
-                          }`}>
-                            {formatCurrency(tx.amount)}
-                          </td>
-                          <td className="py-3 px-2">{formatDate(tx.date)}</td>
-                          <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
-                          <td className="py-3 px-2">
-                            <span className="flex items-center gap-1 text-green-500 text-xs">
-                              <CheckCircle className="h-3 w-3" />
-                              Verified
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                 <table className="w-full text-sm">
+  <thead>
+    <tr className="border-b">
+      <th className="text-left py-3 px-2">Transaction ID</th>
+      {isAdmin && (
+        <th className="text-left py-3 px-2">Branch</th>
+      )}
+      <th className="text-left py-3 px-2">Type</th>
+      <th className="text-left py-3 px-2">Category</th>
+      <th className="text-left py-3 px-2">Amount</th>
+      <th className="text-left py-3 px-2">Description</th>
+      <th className="text-left py-3 px-2">Date</th>
+      <th className="text-left py-3 px-2">Timestamp</th>
+      <th className="text-left py-3 px-2">Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {transactions.map((tx) => (
+      <tr key={tx.id} className="border-b hover:bg-muted/50">
+        <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
+        {isAdmin && (
+          <td className="py-3 px-2">
+            <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
+              {getBranchName(tx.smeName)}
+            </span>
+          </td>
+        )}
+        <td className="py-3 px-2">
+          <span className={`px-2 py-1 rounded text-xs font-medium ${
+            tx.type === 'income' 
+              ? 'bg-green-500/20 text-green-500' 
+              : 'bg-red-500/20 text-red-500'
+          }`}>
+            {tx.type}
+          </span>
+        </td>
+        <td className="py-3 px-2">{tx.category}</td>
+        <td className={`py-3 px-2 font-medium ${
+          tx.type === 'income' ? 'text-green-500' : 'text-red-500'
+        }`}>
+          {formatCurrency(tx.amount)}
+        </td>
+        <td className="py-3 px-2 text-xs max-w-[200px] truncate" title={tx.description}>
+          {tx.description ? (
+            <span className={tx.description.startsWith('[AMENDMENT]') ? 'text-yellow-500' : tx.description.startsWith('[DELETED]') ? 'text-red-500' : ''}>
+              {tx.description}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </td>
+        <td className="py-3 px-2">{formatDate(tx.date)}</td>
+        <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
+        <td className="py-3 px-2">
+          <span className="flex items-center gap-1 text-green-500 text-xs">
+            <CheckCircle className="h-3 w-3" />
+            Verified
+          </span>
+        </td>
+      </tr>
+    ))}
+  </tbody>
+</table>
                 </div>
               )}
             </CardContent>
