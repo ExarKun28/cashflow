@@ -12,6 +12,25 @@ export type LoginUserPayload = {
 	password: string;
 };
 
+// Helper function to wait for profile to exist
+async function waitForProfile(userId: string, maxAttempts = 10): Promise<boolean> {
+	for (let i = 0; i < maxAttempts; i++) {
+		const { data } = await supabase
+			.from("profiles")
+			.select("id")
+			.eq("id", userId)
+			.single();
+		
+		if (data) {
+			return true;
+		}
+		
+		// Wait 500ms before trying again
+		await new Promise(resolve => setTimeout(resolve, 500));
+	}
+	return false;
+}
+
 export async function registerBusiness(
 	payload: RegisterBusinessPayload
 ): Promise<string> {
@@ -49,7 +68,13 @@ export async function registerBusiness(
 		throw new Error("Unable to retrieve session token");
 	}
 
-	// Step 3: Create organization
+	// Step 3: Wait for profile to be created by database trigger
+	const profileExists = await waitForProfile(authUser.id);
+	if (!profileExists) {
+		throw new Error("Profile creation timed out. Please try again.");
+	}
+
+	// Step 4: Create organization
 	const { data: orgData, error: orgError } = await supabase
 		.from("organizations")
 		.insert({
@@ -63,7 +88,7 @@ export async function registerBusiness(
 		throw new Error("Failed to create organization: " + orgError.message);
 	}
 
-	// Step 4: Update profile - set as admin and link to organization
+	// Step 5: Update profile - set as admin and link to organization
 	const { error: profileError } = await supabase
 		.from("profiles")
 		.update({
