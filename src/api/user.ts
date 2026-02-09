@@ -49,62 +49,31 @@ export async function registerBusiness(
 		throw new Error("Unable to create auth user");
 	}
 
-	// Step 2: Sign in to get session
-	let session = authData.session;
-	if (!session) {
-		const { data: signInData, error: signInError } =
-			await supabase.auth.signInWithPassword({
-				email: payload.email,
-				password: payload.password,
-			});
-		if (signInError) {
-			throw new Error(signInError.message);
-		}
-		session = signInData.session;
-	}
-
-	const accessToken = session?.access_token;
-	if (!accessToken) {
-		throw new Error("Unable to retrieve session token");
-	}
-
-	// Step 3: Wait for profile to be created by database trigger
+	// Step 2: Wait for profile to be created by database trigger
 	const profileExists = await waitForProfile(authUser.id);
 	if (!profileExists) {
 		throw new Error("Profile creation timed out. Please try again.");
 	}
 
-	// Step 4: Create organization
-	const { data: orgData, error: orgError } = await supabase
-		.from("organizations")
-		.insert({
-			name: payload.businessName,
-			created_by: authUser.id,
-		})
-		.select()
-		.single();
+	// Step 3: Call the database function to set up the business
+	// This bypasses RLS because it uses SECURITY DEFINER
+	const { data: orgId, error: setupError } = await supabase.rpc('setup_new_business', {
+		user_id: authUser.id,
+		business_name: payload.businessName,
+		full_name: payload.fullName,
+		user_email: payload.email,
+	});
 
-	if (orgError) {
-		throw new Error("Failed to create organization: " + orgError.message);
+	if (setupError) {
+		console.error("Setup error:", setupError);
+		throw new Error("Failed to set up business: " + setupError.message);
 	}
 
-	// Step 5: Update profile - set as admin and link to organization
-	const { error: profileError } = await supabase
-		.from("profiles")
-		.update({
-			full_name: payload.fullName,
-			email: payload.email,
-			role: "admin",
-			org_id: orgData.id,
-			branch_id: null,
-		})
-		.eq("id", authUser.id);
+	console.log("Business created with org_id:", orgId);
 
-	if (profileError) {
-		throw new Error("Failed to update profile: " + profileError.message);
-	}
-
-	return accessToken;
+	// Step 4: Return message about email confirmation
+	// User needs to confirm email before they can sign in
+	throw new Error("Account created successfully! Please check your email to confirm your account, then sign in.");
 }
 
 export async function loginUser(payload: LoginUserPayload): Promise<string> {

@@ -49,7 +49,14 @@ export default function RegisterPage() {
       navigate("/dashboard", { replace: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Registration failed";
-      alert(message);
+      
+      // Check if it's a success message (account created, needs email confirmation)
+      if (message.includes("Account created successfully")) {
+        alert(message);
+        navigate("/", { replace: true }); // Redirect to login page
+      } else {
+        alert(message);
+      }
     } finally {
       setIsLoading(false);
     }
