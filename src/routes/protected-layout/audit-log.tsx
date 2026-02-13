@@ -1,10 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Sidebar } from '@/components/sidebar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getBlockchainTransactions, checkBlockchainHealth, type BlockchainTransaction } from '@/lib/blockchain'
-import { Shield, CheckCircle, XCircle, RefreshCw, Building2, User } from 'lucide-react'
+import { Shield, CheckCircle, XCircle, RefreshCw, Building2, User, CalendarDays } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { supabase } from '@/lib/supabase'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 type Branch = {
   id: number;
@@ -19,17 +26,70 @@ export default function AuditLogPage() {
   const [userRole, setUserRole] = useState<string | null>(null)
   const [orgName, setOrgName] = useState<string | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
+  
+  // Month filter state
+  const [selectedMonth, setSelectedMonth] = useState<string>("all")
 
   const isAdmin = userRole === 'admin'
+
+  // Generate month options from available transactions
+  const monthOptions = useMemo(() => {
+    const months = new Set<string>()
+    
+    transactions.forEach((tx) => {
+      const date = new Date(tx.date)
+      if (!isNaN(date.getTime())) {
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        months.add(monthKey)
+      }
+    })
+
+    return Array.from(months).sort((a, b) => b.localeCompare(a))
+  }, [transactions])
+
+  // Format month key to readable label
+  const formatMonthLabel = (monthKey: string) => {
+    const [year, month] = monthKey.split('-')
+    const date = new Date(parseInt(year), parseInt(month) - 1)
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  }
+
+  // Filter transactions by selected month
+  const filteredTransactions = useMemo(() => {
+    if (selectedMonth === "all") {
+      return transactions
+    }
+
+    return transactions.filter((tx) => {
+      const date = new Date(tx.date)
+      if (isNaN(date.getTime())) return false
+      
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+      return monthKey === selectedMonth
+    })
+  }, [transactions, selectedMonth])
+
+  // Calculate totals based on filtered data
+  const totalIncome = useMemo(() => 
+    filteredTransactions
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + t.amount, 0),
+    [filteredTransactions]
+  )
+
+  const totalExpense = useMemo(() => 
+    filteredTransactions
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + t.amount, 0),
+    [filteredTransactions]
+  )
 
   // Get branch name from smeName (format: "orgId-branchId")
   const getBranchName = (smeName: string) => {
     if (!smeName) return "Unknown"
     
-    // Check if it's in the new format (orgId-branchId)
     const parts = smeName.split('-')
     if (parts.length >= 2) {
-      // The last part should be the branchId
       const branchId = parseInt(parts[parts.length - 1], 10)
       if (!isNaN(branchId)) {
         const branch = branches.find((b) => b.id === branchId)
@@ -37,14 +97,12 @@ export default function AuditLogPage() {
       }
     }
     
-    // Old format or unknown - return as is
     return "Unknown"
   }
 
   const fetchData = async () => {
     setIsLoading(true)
     try {
-      // Get current user
       const { data: { user } } = await supabase.auth.getUser()
       
       if (!user) {
@@ -52,7 +110,6 @@ export default function AuditLogPage() {
         return
       }
 
-      // Get user's profile with role and org_id
       const { data: profile } = await supabase
         .from('profiles')
         .select('role, org_id')
@@ -63,7 +120,6 @@ export default function AuditLogPage() {
       const orgId = profile?.org_id
       setUserRole(role)
 
-      // Get organization name and branches if admin
       if (role === 'admin' && orgId) {
         const { data: org } = await supabase
           .from('organizations')
@@ -72,7 +128,6 @@ export default function AuditLogPage() {
           .single()
         setOrgName(org?.name || null)
 
-        // Fetch branches for admin
         const { data: branchData } = await supabase
           .from('branches')
           .select('id, name')
@@ -83,17 +138,14 @@ export default function AuditLogPage() {
         }
       }
 
-      // Check blockchain health
       const health = await checkBlockchainHealth()
       setIsHealthy(health.status === 'OK')
 
-      // Get all blockchain transactions
       const allTransactions = await getBlockchainTransactions()
       
-      let filteredTransactions: BlockchainTransaction[] = []
+      let filteredTx: BlockchainTransaction[] = []
 
       if (role === 'admin' && orgId) {
-        // Admin: Get all branches in the organization
         const { data: orgBranches } = await supabase
           .from('branches')
           .select('id')
@@ -101,7 +153,6 @@ export default function AuditLogPage() {
 
         const branchIds = orgBranches?.map(b => b.id) || []
         
-        // Also get all user IDs in the org (for old format compatibility)
         const { data: orgUsers } = await supabase
           .from('profiles')
           .select('id')
@@ -109,10 +160,7 @@ export default function AuditLogPage() {
 
         const orgUserIds = orgUsers?.map(u => u.id) || []
         
-        // Filter transactions that belong to any branch in the organization
-        // New format: orgId-branchId
-        // Old format: orgId or userId
-        filteredTransactions = allTransactions.filter(tx => 
+        filteredTx = allTransactions.filter(tx => 
           branchIds.some(branchId => tx.smeName === `${orgId}-${branchId}`) ||
           tx.smeName === orgId ||
           orgUserIds.includes(tx.smeName)
@@ -122,10 +170,9 @@ export default function AuditLogPage() {
           orgId,
           branchCount: branchIds.length,
           userCount: orgUserIds.length,
-          transactionCount: filteredTransactions.length
+          transactionCount: filteredTx.length
         })
       } else {
-        // Regular user: Only show their own branch's transactions
         const { data: userProfile } = await supabase
           .from('profiles')
           .select('branch_id')
@@ -134,22 +181,20 @@ export default function AuditLogPage() {
 
         const userBranchId = userProfile?.branch_id
 
-        // Filter by orgId-branchId combination (new format)
-        // Also check old formats for backwards compatibility
-         filteredTransactions = allTransactions.filter(tx => 
-         tx.smeName === `${orgId}-${userBranchId}` ||
-         tx.smeName === user.id
-       ) 
+        filteredTx = allTransactions.filter(tx => 
+          tx.smeName === `${orgId}-${userBranchId}` ||
+          tx.smeName === user.id
+        )
 
         console.log('[AuditLog] User mode: showing branch transactions only', {
           userId: user.id,
           orgId: orgId,
           branchId: userBranchId,
-          transactionCount: filteredTransactions.length
+          transactionCount: filteredTx.length
         })
       }
       
-      setTransactions(filteredTransactions)
+      setTransactions(filteredTx)
       setLastUpdated(new Date())
     } catch (error) {
       console.error('Failed to fetch blockchain data:', error)
@@ -189,14 +234,6 @@ export default function AuditLogPage() {
     })}`
   }
 
-  const totalIncome = transactions
-    .filter(t => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0)
-
-  const totalExpense = transactions
-    .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + t.amount, 0)
-
   return (
     <div className="flex h-screen bg-background">
       <Sidebar />
@@ -208,7 +245,6 @@ export default function AuditLogPage() {
               <p className="text-muted-foreground">
                 Immutable transaction records on Hyperledger Fabric
               </p>
-              {/* Show role indicator */}
               {userRole && (
                 <div className="flex items-center gap-2 mt-2">
                   {userRole === 'admin' ? (
@@ -225,10 +261,29 @@ export default function AuditLogPage() {
                 </div>
               )}
             </div>
-            <Button onClick={fetchData} disabled={isLoading} variant="outline">
-              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-3">
+              {/* Month Filter */}
+              <div className="flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select month" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Time</SelectItem>
+                    {monthOptions.map((monthKey) => (
+                      <SelectItem key={monthKey} value={monthKey}>
+                        {formatMonthLabel(monthKey)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button onClick={fetchData} disabled={isLoading} variant="outline">
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
 
           {/* Status Cards */}
@@ -257,16 +312,30 @@ export default function AuditLogPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Total Transactions</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Total Transactions
+                  {selectedMonth !== "all" && (
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {formatMonthLabel(selectedMonth)}
+                    </span>
+                  )}
+                </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{transactions.length}</div>
+                <div className="text-2xl font-bold">{filteredTransactions.length}</div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Total Income</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Total Income
+                  {selectedMonth !== "all" && (
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {formatMonthLabel(selectedMonth)}
+                    </span>
+                  )}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-500">
@@ -277,7 +346,14 @@ export default function AuditLogPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Total Expense</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Total Expense
+                  {selectedMonth !== "all" && (
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {formatMonthLabel(selectedMonth)}
+                    </span>
+                  )}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-red-500">
@@ -291,6 +367,11 @@ export default function AuditLogPage() {
           {lastUpdated && (
             <p className="text-sm text-muted-foreground">
               Last updated: {formatTimestamp(lastUpdated.toISOString())}
+              {selectedMonth !== "all" && (
+                <span className="ml-2 text-primary">
+                  • Filtered: {formatMonthLabel(selectedMonth)}
+                </span>
+              )}
             </p>
           )}
 
@@ -300,7 +381,11 @@ export default function AuditLogPage() {
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
                 Blockchain Transactions
-                {userRole === 'admin' && (
+                {selectedMonth !== "all" ? (
+                  <span className="text-sm font-normal text-muted-foreground">
+                    ({filteredTransactions.length} entries in {formatMonthLabel(selectedMonth)})
+                  </span>
+                ) : userRole === 'admin' && (
                   <span className="text-sm font-normal text-muted-foreground">
                     (All organization transactions)
                   </span>
@@ -310,75 +395,84 @@ export default function AuditLogPage() {
             <CardContent>
               {isLoading ? (
                 <div className="text-center py-8">Loading blockchain data...</div>
-              ) : transactions.length === 0 ? (
+              ) : filteredTransactions.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  No transactions recorded on blockchain yet.
+                  {selectedMonth === "all" 
+                    ? "No transactions recorded on blockchain yet."
+                    : `No transactions for ${formatMonthLabel(selectedMonth)}.`}
+                  {selectedMonth !== "all" && (
+                    <div className="mt-2">
+                      <Button variant="outline" size="sm" onClick={() => setSelectedMonth("all")}>
+                        Show All Transactions
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                 <table className="w-full text-sm">
-  <thead>
-    <tr className="border-b">
-      <th className="text-left py-3 px-2">Transaction ID</th>
-      {isAdmin && (
-        <th className="text-left py-3 px-2">Branch</th>
-      )}
-      <th className="text-left py-3 px-2">Type</th>
-      <th className="text-left py-3 px-2">Category</th>
-      <th className="text-left py-3 px-2">Amount</th>
-      <th className="text-left py-3 px-2">Description</th>
-      <th className="text-left py-3 px-2">Date</th>
-      <th className="text-left py-3 px-2">Timestamp</th>
-      <th className="text-left py-3 px-2">Status</th>
-    </tr>
-  </thead>
-  <tbody>
-    {transactions.map((tx) => (
-      <tr key={tx.id} className="border-b hover:bg-muted/50">
-        <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
-        {isAdmin && (
-          <td className="py-3 px-2">
-            <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
-              {getBranchName(tx.smeName)}
-            </span>
-          </td>
-        )}
-        <td className="py-3 px-2">
-          <span className={`px-2 py-1 rounded text-xs font-medium ${
-            tx.type === 'income' 
-              ? 'bg-green-500/20 text-green-500' 
-              : 'bg-red-500/20 text-red-500'
-          }`}>
-            {tx.type}
-          </span>
-        </td>
-        <td className="py-3 px-2">{tx.category}</td>
-        <td className={`py-3 px-2 font-medium ${
-          tx.type === 'income' ? 'text-green-500' : 'text-red-500'
-        }`}>
-          {formatCurrency(tx.amount)}
-        </td>
-        <td className="py-3 px-2 text-xs max-w-[200px] truncate" title={tx.description}>
-          {tx.description ? (
-            <span className={tx.description.startsWith('[AMENDMENT]') ? 'text-yellow-500' : tx.description.startsWith('[DELETED]') ? 'text-red-500' : ''}>
-              {tx.description}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">-</span>
-          )}
-        </td>
-        <td className="py-3 px-2">{formatDate(tx.date)}</td>
-        <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
-        <td className="py-3 px-2">
-          <span className="flex items-center gap-1 text-green-500 text-xs">
-            <CheckCircle className="h-3 w-3" />
-            Verified
-          </span>
-        </td>
-      </tr>
-    ))}
-  </tbody>
-</table>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-3 px-2">Transaction ID</th>
+                        {isAdmin && (
+                          <th className="text-left py-3 px-2">Branch</th>
+                        )}
+                        <th className="text-left py-3 px-2">Type</th>
+                        <th className="text-left py-3 px-2">Category</th>
+                        <th className="text-left py-3 px-2">Amount</th>
+                        <th className="text-left py-3 px-2">Description</th>
+                        <th className="text-left py-3 px-2">Date</th>
+                        <th className="text-left py-3 px-2">Timestamp</th>
+                        <th className="text-left py-3 px-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTransactions.map((tx) => (
+                        <tr key={tx.id} className="border-b hover:bg-muted/50">
+                          <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
+                          {isAdmin && (
+                            <td className="py-3 px-2">
+                              <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
+                                {getBranchName(tx.smeName)}
+                              </span>
+                            </td>
+                          )}
+                          <td className="py-3 px-2">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              tx.type === 'income' 
+                                ? 'bg-green-500/20 text-green-500' 
+                                : 'bg-red-500/20 text-red-500'
+                            }`}>
+                              {tx.type}
+                            </span>
+                          </td>
+                          <td className="py-3 px-2">{tx.category}</td>
+                          <td className={`py-3 px-2 font-medium ${
+                            tx.type === 'income' ? 'text-green-500' : 'text-red-500'
+                          }`}>
+                            {formatCurrency(tx.amount)}
+                          </td>
+                          <td className="py-3 px-2 text-xs max-w-[200px] truncate" title={tx.description}>
+                            {tx.description ? (
+                              <span className={tx.description.startsWith('[AMENDMENT]') ? 'text-yellow-500' : tx.description.startsWith('[DELETED]') ? 'text-red-500' : ''}>
+                                {tx.description}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-2">{formatDate(tx.date)}</td>
+                          <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
+                          <td className="py-3 px-2">
+                            <span className="flex items-center gap-1 text-green-500 text-xs">
+                              <CheckCircle className="h-3 w-3" />
+                              Verified
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </CardContent>
