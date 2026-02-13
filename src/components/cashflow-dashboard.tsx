@@ -5,7 +5,14 @@ import { useCashflowStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Trash2, Edit } from "lucide-react";
+import { Trash2, Edit, CalendarDays } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import {
   AlertDialog,
@@ -45,26 +52,69 @@ export function CashflowDashboard() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
+  
+  // Month filter state - "all" means show all transactions
+  const [selectedMonth, setSelectedMonth] = useState<string>("all");
 
   const isAdmin = userRole === 'admin';
 
   const INCOME_COLOR = "#16a34a";
   const EXPENSE_COLOR = "#dc2626";
 
+  // Generate month options from available transactions
+  const monthOptions = useMemo(() => {
+    const months = new Set<string>();
+    
+    cashflows.forEach((cf) => {
+      const date = new Date(cf.date);
+      if (!isNaN(date.getTime())) {
+        // Format: "2025-09" for September 2025
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        months.add(monthKey);
+      }
+    });
+
+    // Sort months in descending order (newest first)
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [cashflows]);
+
+  // Format month key to readable label (e.g., "2025-09" → "September 2025")
+  const formatMonthLabel = (monthKey: string) => {
+    const [year, month] = monthKey.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  // Filter cashflows by selected month
+  const filteredCashflows = useMemo(() => {
+    if (selectedMonth === "all") {
+      return cashflows;
+    }
+
+    return cashflows.filter((cf) => {
+      const date = new Date(cf.date);
+      if (isNaN(date.getTime())) return false;
+      
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      return monthKey === selectedMonth;
+    });
+  }, [cashflows, selectedMonth]);
+
+  // Calculate totals based on filtered data
   const totalIncome = useMemo(
     () =>
-      cashflows
+      filteredCashflows
         .filter((cf) => cf.category === "income")
         .reduce((sum, cf) => sum + cf.amount, 0),
-    [cashflows],
+    [filteredCashflows],
   );
 
   const totalExpense = useMemo(
     () =>
-      cashflows
+      filteredCashflows
         .filter((cf) => cf.category === "expense")
         .reduce((sum, cf) => sum + cf.amount, 0),
-    [cashflows],
+    [filteredCashflows],
   );
 
   const balance = totalIncome - totalExpense;
@@ -79,7 +129,7 @@ export function CashflowDashboard() {
 
   const categoryBreakdown = useMemo(
     () =>
-      cashflows.reduce(
+      filteredCashflows.reduce(
         (acc, cf) => {
           const existing = acc.find((item) => item.name === cf.category);
           if (existing) {
@@ -91,7 +141,7 @@ export function CashflowDashboard() {
         },
         [] as Array<{ name: string; value: number }>,
       ),
-    [cashflows],
+    [filteredCashflows],
   );
 
   // Get branch name from ID
@@ -188,16 +238,41 @@ export function CashflowDashboard() {
   return (
     <div className="container mx-auto py-8 px-4">
       <div className="mb-8">
-        <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-4xl font-bold text-foreground">Dashboard</h1>
-          {isAdmin && (
-            <span className="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100 rounded">
-              Admin View
-            </span>
-          )}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <h1 className="text-4xl font-bold text-foreground">Dashboard</h1>
+            {isAdmin && (
+              <span className="px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-100 rounded">
+                Admin View
+              </span>
+            )}
+          </div>
+          
+          {/* Month Filter */}
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Select month" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Time</SelectItem>
+                {monthOptions.map((monthKey) => (
+                  <SelectItem key={monthKey} value={monthKey}>
+                    {formatMonthLabel(monthKey)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
         <p className="text-muted-foreground">
           {isAdmin ? "Overview of all organization cashflows" : "Overview of your cashflows"}
+          {selectedMonth !== "all" && (
+            <span className="ml-2 text-primary font-medium">
+              • Showing: {formatMonthLabel(selectedMonth)}
+            </span>
+          )}
         </p>
       </div>
 
@@ -212,6 +287,9 @@ export function CashflowDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Total Income
+              {selectedMonth !== "all" && (
+                <span className="ml-1 text-xs">({formatMonthLabel(selectedMonth)})</span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -225,6 +303,9 @@ export function CashflowDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Total Expense
+              {selectedMonth !== "all" && (
+                <span className="ml-1 text-xs">({formatMonthLabel(selectedMonth)})</span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -238,6 +319,9 @@ export function CashflowDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Balance
+              {selectedMonth !== "all" && (
+                <span className="ml-1 text-xs">({formatMonthLabel(selectedMonth)})</span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -250,7 +334,7 @@ export function CashflowDashboard() {
         </Card>
       </div>
 
-      {cashflows.length > 0 && (
+      {filteredCashflows.length > 0 && (
         <div className="grid grid-cols-1 gap-4 mb-8 lg:grid-cols-2">
           <Card>
             <CardHeader>
@@ -334,7 +418,14 @@ export function CashflowDashboard() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle>Cashflow Entries</CardTitle>
+            <CardTitle>
+              Cashflow Entries
+              {selectedMonth !== "all" && (
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  ({filteredCashflows.length} entries)
+                </span>
+              )}
+            </CardTitle>
             <Button onClick={() => navigate("/create")}>Add New Entry</Button>
           </div>
         </CardHeader>
@@ -343,14 +434,22 @@ export function CashflowDashboard() {
             <div className="py-8 text-center text-muted-foreground">
               Loading your cashflows...
             </div>
-          ) : cashflows.length === 0 ? (
+          ) : filteredCashflows.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground mb-4">
-                No cashflow entries yet
+                {selectedMonth === "all" 
+                  ? "No cashflow entries yet" 
+                  : `No entries for ${formatMonthLabel(selectedMonth)}`}
               </p>
-              <Button onClick={() => navigate("/create")}>
-                Create Your First Entry
-              </Button>
+              {selectedMonth === "all" ? (
+                <Button onClick={() => navigate("/create")}>
+                  Create Your First Entry
+                </Button>
+              ) : (
+                <Button variant="outline" onClick={() => setSelectedMonth("all")}>
+                  Show All Entries
+                </Button>
+              )}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -383,7 +482,7 @@ export function CashflowDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {cashflows.map((cashflow) => (
+                  {filteredCashflows.map((cashflow) => (
                     <tr
                       key={cashflow.id}
                       className="border-b border-border hover:bg-muted/50 transition-colors"
