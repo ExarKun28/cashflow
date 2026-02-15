@@ -58,11 +58,14 @@ export default function LoginPage() {
 
   return (
     <Card className="w-full max-w-md">
-      <CardHeader className="space-y-4">
+      <CardHeader className="space-y-6">
+
         <div className="flex justify-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-primary">
-           <img src="/CASH FLOW MONITORING SYSTEM DDD.png" alt="Logo" className="h-12 w-12" />
-          </div>
+          <img
+            src="/CASH FLOW MONITORING SYSTEM DDD.png"
+            alt="Logo"
+            className="h-36 w-36 object-contain opacity-90"
+          />
         </div>
 
         <div className="space-y-2 text-center">

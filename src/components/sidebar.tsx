@@ -34,34 +34,60 @@ export function Sidebar() {
   useEffect(() => {
     let active = true;
 
-    const applyUser = (email: string | null, fullName: string | null) => {
-      setUserEmail(email);
-      setUserName(fullName ?? email);
-    };
-
     async function loadUser() {
       const { data, error } = await supabase.auth.getUser();
-      if (!active || error) return;
-      const nextUser = data.user ?? null;
-      applyUser(
-        nextUser?.email ?? null,
-        (nextUser?.user_metadata?.full_name as string | null | undefined) ??
-          null,
-      );
+      if (!active || error || !data.user) return;
+      
+      const user = data.user;
+      setUserEmail(user.email ?? null);
+      
+      let fullName = user.user_metadata?.full_name as string | null | undefined;
+      
+      if (!fullName) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+        
+        fullName = profile?.full_name ?? null;
+      }
+      
+      if (active) {
+        setUserName(fullName ?? null);
+      }
     }
 
     loadUser();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!active) return;
-      const nextUser = session?.user ?? null;
-      applyUser(
-        nextUser?.email ?? null,
-        (nextUser?.user_metadata?.full_name as string | null | undefined) ??
-          null,
-      );
+      const user = session?.user ?? null;
+      
+      if (user) {
+        setUserEmail(user.email ?? null);
+        
+        let fullName = user.user_metadata?.full_name as string | null | undefined;
+        
+        if (!fullName) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', user.id)
+            .single();
+          
+          fullName = profile?.full_name ?? null;
+        }
+        
+        if (active) {
+          setUserName(fullName ?? null);
+        }
+      } else {
+        setUserEmail(null);
+        setUserName(null);
+      }
     });
 
     return () => {
@@ -91,22 +117,12 @@ export function Sidebar() {
 
   return (
     <aside
-      className={`bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 ${isCollapsed ? "w-20" : "w-64"}`}
+      className={`bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 relative ${isCollapsed ? "w-20" : "w-72"}`}
     >
-      <div className="p-6 border-b border-sidebar-border flex items-center justify-between">
-        {!isCollapsed && (
-          <div>
-            <h1 className="text-xl font-bold text-sidebar-foreground">
-              CashFlow
-            </h1>
-            <p className="text-sm text-sidebar-foreground/60 mt-1">
-              Manage your finances
-            </p>
-          </div>
-        )}
+      <div className="p-4 border-b border-sidebar-border flex flex-col items-center relative">
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="ml-auto text-sidebar-foreground hover:bg-sidebar-accent p-2 rounded"
+          className="absolute top-2 right-2 text-sidebar-foreground hover:bg-sidebar-accent p-2 rounded"
         >
           {isCollapsed ? (
             <Menu className="w-5 h-5" />
@@ -114,6 +130,20 @@ export function Sidebar() {
             <X className="w-5 h-5" />
           )}
         </button>
+        {!isCollapsed && (
+          <img 
+            src="/SALIG LOGO.png" 
+            alt="Salig Logo" 
+            className="w-52 h-52 object-contain"
+          />
+        )}
+        {isCollapsed && (
+          <img 
+            src="/SALIG LOGO.png" 
+            alt="Salig Logo" 
+            className="w-14 h-14 object-contain mt-8"
+          />
+        )}
       </div>
 
       <nav className="flex-1 p-4 space-y-2">
@@ -172,15 +202,15 @@ export function Sidebar() {
         <ThemeToggle collapsed={isCollapsed} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-           <Button
-             variant="ghost"
-             className={`w-full ${isCollapsed ? "justify-center p-2" : "justify-start"} overflow-hidden`}
-          >
-            <Avatar className="w-6 h-6 mr-2 flex-shrink-0">
-           <AvatarFallback className="text-xs">{initials}</AvatarFallback>
-            </Avatar>
-            {!isCollapsed && <span className="truncate max-w-[140px]">{displayName}</span>}
-              </Button>
+            <Button
+              variant="ghost"
+              className={`w-full ${isCollapsed ? "justify-center p-2" : "justify-start"} overflow-hidden`}
+            >
+              <Avatar className="w-6 h-6 mr-2 flex-shrink-0">
+                <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+              </Avatar>
+              {!isCollapsed && <span className="truncate max-w-[160px]">{displayName}</span>}
+            </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align={isCollapsed ? "start" : "end"}
