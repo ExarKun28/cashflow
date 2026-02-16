@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { Sidebar } from '@/components/sidebar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getBlockchainTransactions, checkBlockchainHealth, type BlockchainTransaction } from '@/lib/blockchain'
-import { Shield, CheckCircle, XCircle, RefreshCw, Building2, User, CalendarDays } from 'lucide-react'
+import { Shield, CheckCircle, XCircle, RefreshCw, Building2, User, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { supabase } from '@/lib/supabase'
 import {
@@ -18,6 +18,8 @@ type Branch = {
   name: string;
 };
 
+const ITEMS_PER_PAGE = 10;
+
 export default function AuditLogPage() {
   const [transactions, setTransactions] = useState<BlockchainTransaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -27,8 +29,12 @@ export default function AuditLogPage() {
   const [orgName, setOrgName] = useState<string | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
   
-  // Month filter state
+  // Filter states
   const [selectedMonth, setSelectedMonth] = useState<string>("all")
+  const [selectedBranch, setSelectedBranch] = useState<string>("all")
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
 
   const isAdmin = userRole === 'admin'
 
@@ -54,22 +60,83 @@ export default function AuditLogPage() {
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   }
 
-  // Filter transactions by selected month
+  // Get branch ID from smeName (format: "orgId-branchId")
+  const getBranchIdFromSmeName = (smeName: string): number | null => {
+    if (!smeName) return null
+    const parts = smeName.split('-')
+    if (parts.length >= 2) {
+      const branchId = parseInt(parts[parts.length - 1], 10)
+      if (!isNaN(branchId)) return branchId
+    }
+    return null
+  }
+
+  // Filter transactions by selected month AND branch
   const filteredTransactions = useMemo(() => {
-    if (selectedMonth === "all") {
-      return transactions
+    let filtered = transactions
+
+    // Filter by month
+    if (selectedMonth !== "all") {
+      filtered = filtered.filter((tx) => {
+        const date = new Date(tx.date)
+        if (isNaN(date.getTime())) return false
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        return monthKey === selectedMonth
+      })
     }
 
-    return transactions.filter((tx) => {
-      const date = new Date(tx.date)
-      if (isNaN(date.getTime())) return false
-      
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-      return monthKey === selectedMonth
-    })
-  }, [transactions, selectedMonth])
+    // Filter by branch (Admin only)
+    if (isAdmin && selectedBranch !== "all") {
+      filtered = filtered.filter((tx) => {
+        const branchId = getBranchIdFromSmeName(tx.smeName)
+        return branchId === parseInt(selectedBranch)
+      })
+    }
 
-  // Calculate totals based on filtered data
+    return filtered
+  }, [transactions, selectedMonth, selectedBranch, isAdmin])
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [selectedMonth, selectedBranch])
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredTransactions.length / ITEMS_PER_PAGE)
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+  const endIndex = startIndex + ITEMS_PER_PAGE
+  const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex)
+
+  // Generate page numbers to display
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = []
+    const maxVisiblePages = 5
+    
+    if (totalPages <= maxVisiblePages) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i)
+      }
+    } else {
+      if (currentPage <= 3) {
+        for (let i = 1; i <= 4; i++) pages.push(i)
+        pages.push('...')
+        pages.push(totalPages)
+      } else if (currentPage >= totalPages - 2) {
+        pages.push(1)
+        pages.push('...')
+        for (let i = totalPages - 3; i <= totalPages; i++) pages.push(i)
+      } else {
+        pages.push(1)
+        pages.push('...')
+        for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i)
+        pages.push('...')
+        pages.push(totalPages)
+      }
+    }
+    return pages
+  }
+
+  // Calculate totals based on ALL filtered data (not just current page)
   const totalIncome = useMemo(() => 
     filteredTransactions
       .filter(t => t.type === 'income')
@@ -83,6 +150,8 @@ export default function AuditLogPage() {
       .reduce((sum, t) => sum + t.amount, 0),
     [filteredTransactions]
   )
+
+  const balance = totalIncome - totalExpense
 
   // Get branch name from smeName (format: "orgId-branchId")
   const getBranchName = (smeName: string) => {
@@ -117,21 +186,21 @@ export default function AuditLogPage() {
         .single()
 
       const role = profile?.role || 'user'
-      const orgId = profile?.org_id
+      const userOrgId = profile?.org_id
       setUserRole(role)
 
-      if (role === 'admin' && orgId) {
+      if (role === 'admin' && userOrgId) {
         const { data: org } = await supabase
           .from('organizations')
           .select('name')
-          .eq('id', orgId)
+          .eq('id', userOrgId)
           .single()
         setOrgName(org?.name || null)
 
         const { data: branchData } = await supabase
           .from('branches')
           .select('id, name')
-          .eq('org_id', orgId)
+          .eq('org_id', userOrgId)
         
         if (branchData) {
           setBranches(branchData)
@@ -145,29 +214,29 @@ export default function AuditLogPage() {
       
       let filteredTx: BlockchainTransaction[] = []
 
-      if (role === 'admin' && orgId) {
+      if (role === 'admin' && userOrgId) {
         const { data: orgBranches } = await supabase
           .from('branches')
           .select('id')
-          .eq('org_id', orgId)
+          .eq('org_id', userOrgId)
 
         const branchIds = orgBranches?.map(b => b.id) || []
         
         const { data: orgUsers } = await supabase
           .from('profiles')
           .select('id')
-          .eq('org_id', orgId)
+          .eq('org_id', userOrgId)
 
         const orgUserIds = orgUsers?.map(u => u.id) || []
         
         filteredTx = allTransactions.filter(tx => 
-          branchIds.some(branchId => tx.smeName === `${orgId}-${branchId}`) ||
-          tx.smeName === orgId ||
+          branchIds.some(branchId => tx.smeName === `${userOrgId}-${branchId}`) ||
+          tx.smeName === userOrgId ||
           orgUserIds.includes(tx.smeName)
         )
         
         console.log('[AuditLog] Admin mode: showing all org transactions', {
-          orgId,
+          orgId: userOrgId,
           branchCount: branchIds.length,
           userCount: orgUserIds.length,
           transactionCount: filteredTx.length
@@ -182,13 +251,13 @@ export default function AuditLogPage() {
         const userBranchId = userProfile?.branch_id
 
         filteredTx = allTransactions.filter(tx => 
-          tx.smeName === `${orgId}-${userBranchId}` ||
+          tx.smeName === `${userOrgId}-${userBranchId}` ||
           tx.smeName === user.id
         )
 
         console.log('[AuditLog] User mode: showing branch transactions only', {
           userId: user.id,
-          orgId: orgId,
+          orgId: userOrgId,
           branchId: userBranchId,
           transactionCount: filteredTx.length
         })
@@ -262,6 +331,26 @@ export default function AuditLogPage() {
               )}
             </div>
             <div className="flex items-center gap-3">
+              {/* Branch Filter (Admin only) */}
+              {isAdmin && branches.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-muted-foreground" />
+                  <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Select branch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Branches</SelectItem>
+                      {branches.map((branch) => (
+                        <SelectItem key={branch.id} value={branch.id.toString()}>
+                          {branch.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              
               {/* Month Filter */}
               <div className="flex items-center gap-2">
                 <CalendarDays className="h-4 w-4 text-muted-foreground" />
@@ -279,6 +368,7 @@ export default function AuditLogPage() {
                   </SelectContent>
                 </Select>
               </div>
+              
               <Button onClick={fetchData} disabled={isLoading} variant="outline">
                 <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                 Refresh
@@ -287,7 +377,7 @@ export default function AuditLogPage() {
           </div>
 
           {/* Status Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-medium">Blockchain Status</CardTitle>
@@ -312,14 +402,7 @@ export default function AuditLogPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Total Transactions
-                  {selectedMonth !== "all" && (
-                    <span className="block text-xs font-normal text-muted-foreground">
-                      {formatMonthLabel(selectedMonth)}
-                    </span>
-                  )}
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Total Transactions</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{filteredTransactions.length}</div>
@@ -328,14 +411,7 @@ export default function AuditLogPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Total Income
-                  {selectedMonth !== "all" && (
-                    <span className="block text-xs font-normal text-muted-foreground">
-                      {formatMonthLabel(selectedMonth)}
-                    </span>
-                  )}
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Total Income</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-green-500">
@@ -346,18 +422,22 @@ export default function AuditLogPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">
-                  Total Expense
-                  {selectedMonth !== "all" && (
-                    <span className="block text-xs font-normal text-muted-foreground">
-                      {formatMonthLabel(selectedMonth)}
-                    </span>
-                  )}
-                </CardTitle>
+                <CardTitle className="text-sm font-medium">Total Expense</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold text-red-500">
                   {formatCurrency(totalExpense)}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium">Balance</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className={`text-2xl font-bold ${balance >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {formatCurrency(balance)}
                 </div>
               </CardContent>
             </Card>
@@ -367,9 +447,11 @@ export default function AuditLogPage() {
           {lastUpdated && (
             <p className="text-sm text-muted-foreground">
               Last updated: {formatTimestamp(lastUpdated.toISOString())}
-              {selectedMonth !== "all" && (
+              {(selectedMonth !== "all" || selectedBranch !== "all") && (
                 <span className="ml-2 text-primary">
-                  • Filtered: {formatMonthLabel(selectedMonth)}
+                  • Filtered:
+                  {selectedBranch !== "all" && ` ${branches.find(b => b.id === parseInt(selectedBranch))?.name || 'Branch'}`}
+                  {selectedMonth !== "all" && ` ${formatMonthLabel(selectedMonth)}`}
                 </span>
               )}
             </p>
@@ -381,15 +463,9 @@ export default function AuditLogPage() {
               <CardTitle className="flex items-center gap-2">
                 <Shield className="h-5 w-5" />
                 Blockchain Transactions
-                {selectedMonth !== "all" ? (
-                  <span className="text-sm font-normal text-muted-foreground">
-                    ({filteredTransactions.length} entries in {formatMonthLabel(selectedMonth)})
-                  </span>
-                ) : userRole === 'admin' && (
-                  <span className="text-sm font-normal text-muted-foreground">
-                    (All organization transactions)
-                  </span>
-                )}
+                <span className="text-sm font-normal text-muted-foreground">
+                  ({filteredTransactions.length} total entries)
+                </span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -397,83 +473,129 @@ export default function AuditLogPage() {
                 <div className="text-center py-8">Loading blockchain data...</div>
               ) : filteredTransactions.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
-                  {selectedMonth === "all" 
+                  {selectedMonth === "all" && selectedBranch === "all"
                     ? "No transactions recorded on blockchain yet."
-                    : `No transactions for ${formatMonthLabel(selectedMonth)}.`}
-                  {selectedMonth !== "all" && (
+                    : "No transactions for the selected filters."}
+                  {(selectedMonth !== "all" || selectedBranch !== "all") && (
                     <div className="mt-2">
-                      <Button variant="outline" size="sm" onClick={() => setSelectedMonth("all")}>
-                        Show All Transactions
+                      <Button variant="outline" size="sm" onClick={() => { setSelectedMonth("all"); setSelectedBranch("all"); }}>
+                        Clear Filters
                       </Button>
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b">
-                        <th className="text-left py-3 px-2">Transaction ID</th>
-                        {isAdmin && (
-                          <th className="text-left py-3 px-2">Branch</th>
-                        )}
-                        <th className="text-left py-3 px-2">Type</th>
-                        <th className="text-left py-3 px-2">Category</th>
-                        <th className="text-left py-3 px-2">Amount</th>
-                        <th className="text-left py-3 px-2">Description</th>
-                        <th className="text-left py-3 px-2">Date</th>
-                        <th className="text-left py-3 px-2">Timestamp</th>
-                        <th className="text-left py-3 px-2">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredTransactions.map((tx) => (
-                        <tr key={tx.id} className="border-b hover:bg-muted/50">
-                          <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
+                <>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-3 px-2">Transaction ID</th>
                           {isAdmin && (
+                            <th className="text-left py-3 px-2">Branch</th>
+                          )}
+                          <th className="text-left py-3 px-2">Type</th>
+                          <th className="text-left py-3 px-2">Category</th>
+                          <th className="text-left py-3 px-2">Amount</th>
+                          <th className="text-left py-3 px-2">Description</th>
+                          <th className="text-left py-3 px-2">Date</th>
+                          <th className="text-left py-3 px-2">Timestamp</th>
+                          <th className="text-left py-3 px-2">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedTransactions.map((tx) => (
+                          <tr key={tx.id} className="border-b hover:bg-muted/50">
+                            <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
+                            {isAdmin && (
+                              <td className="py-3 px-2">
+                                <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
+                                  {getBranchName(tx.smeName)}
+                                </span>
+                              </td>
+                            )}
                             <td className="py-3 px-2">
-                              <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
-                                {getBranchName(tx.smeName)}
+                              <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                tx.type === 'income' 
+                                  ? 'bg-green-500/20 text-green-500' 
+                                  : 'bg-red-500/20 text-red-500'
+                              }`}>
+                                {tx.type}
                               </span>
                             </td>
-                          )}
-                          <td className="py-3 px-2">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${
-                              tx.type === 'income' 
-                                ? 'bg-green-500/20 text-green-500' 
-                                : 'bg-red-500/20 text-red-500'
+                            <td className="py-3 px-2">{tx.category}</td>
+                            <td className={`py-3 px-2 font-medium ${
+                              tx.type === 'income' ? 'text-green-500' : 'text-red-500'
                             }`}>
-                              {tx.type}
-                            </span>
-                          </td>
-                          <td className="py-3 px-2">{tx.category}</td>
-                          <td className={`py-3 px-2 font-medium ${
-                            tx.type === 'income' ? 'text-green-500' : 'text-red-500'
-                          }`}>
-                            {formatCurrency(tx.amount)}
-                          </td>
-                          <td className="py-3 px-2 text-xs max-w-[200px] truncate" title={tx.description}>
-                            {tx.description ? (
-                              <span className={tx.description.startsWith('[AMENDMENT]') ? 'text-yellow-500' : tx.description.startsWith('[DELETED]') ? 'text-red-500' : ''}>
-                                {tx.description}
+                              {formatCurrency(tx.amount)}
+                            </td>
+                            <td className="py-3 px-2 text-xs max-w-[200px] truncate" title={tx.description}>
+                              {tx.description ? (
+                                <span className={tx.description.startsWith('[AMENDMENT]') ? 'text-yellow-500' : tx.description.startsWith('[DELETED]') ? 'text-red-500' : ''}>
+                                  {tx.description}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">-</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-2">{formatDate(tx.date)}</td>
+                            <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
+                            <td className="py-3 px-2">
+                              <span className="flex items-center gap-1 text-green-500 text-xs">
+                                <CheckCircle className="h-3 w-3" />
+                                Verified
                               </span>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-2">{formatDate(tx.date)}</td>
-                          <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
-                          <td className="py-3 px-2">
-                            <span className="flex items-center gap-1 text-green-500 text-xs">
-                              <CheckCircle className="h-3 w-3" />
-                              Verified
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                      <div className="text-sm text-muted-foreground">
+                        Showing {startIndex + 1} to {Math.min(endIndex, filteredTransactions.length)} of {filteredTransactions.length} entries
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                          disabled={currentPage === 1}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        
+                        {getPageNumbers().map((page, index) => (
+                          page === '...' ? (
+                            <span key={`ellipsis-${index}`} className="px-2 text-muted-foreground">...</span>
+                          ) : (
+                            <Button
+                              key={page}
+                              variant={currentPage === page ? "default" : "outline"}
+                              size="sm"
+                              onClick={() => setCurrentPage(page as number)}
+                              className="min-w-[36px]"
+                            >
+                              {page}
+                            </Button>
+                          )
+                        ))}
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                          disabled={currentPage === totalPages}
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

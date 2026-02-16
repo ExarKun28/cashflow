@@ -5,7 +5,7 @@ import { useCashflowStore } from "@/lib/store";
 import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Trash2, Edit, CalendarDays } from "lucide-react";
+import { Trash2, Edit, CalendarDays, ChevronLeft, ChevronRight, Building2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -45,6 +45,8 @@ type Branch = {
   name: string;
 };
 
+const ITEMS_PER_PAGE = 10;
+
 export function CashflowDashboard() {
   const { cashflows, deleteCashflow, fetchCashflows, isLoading, error, userRole } =
     useCashflowStore();
@@ -53,8 +55,12 @@ export function CashflowDashboard() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   
-  // Month filter state - "all" means show all transactions
+  // Filter states
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
+  const [selectedBranch, setSelectedBranch] = useState<string>("all");
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
 
   const isAdmin = userRole === 'admin';
 
@@ -68,39 +74,84 @@ export function CashflowDashboard() {
     cashflows.forEach((cf) => {
       const date = new Date(cf.date);
       if (!isNaN(date.getTime())) {
-        // Format: "2025-09" for September 2025
         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
         months.add(monthKey);
       }
     });
 
-    // Sort months in descending order (newest first)
     return Array.from(months).sort((a, b) => b.localeCompare(a));
   }, [cashflows]);
 
-  // Format month key to readable label (e.g., "2025-09" → "September 2025")
+  // Format month key to readable label
   const formatMonthLabel = (monthKey: string) => {
     const [year, month] = monthKey.split('-');
     const date = new Date(parseInt(year), parseInt(month) - 1);
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   };
 
-  // Filter cashflows by selected month
+  // Filter cashflows by selected month AND branch
   const filteredCashflows = useMemo(() => {
-    if (selectedMonth === "all") {
-      return cashflows;
+    let filtered = cashflows;
+
+    // Filter by month
+    if (selectedMonth !== "all") {
+      filtered = filtered.filter((cf) => {
+        const date = new Date(cf.date);
+        if (isNaN(date.getTime())) return false;
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        return monthKey === selectedMonth;
+      });
     }
 
-    return cashflows.filter((cf) => {
-      const date = new Date(cf.date);
-      if (isNaN(date.getTime())) return false;
-      
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      return monthKey === selectedMonth;
-    });
-  }, [cashflows, selectedMonth]);
+    // Filter by branch (Admin only)
+    if (isAdmin && selectedBranch !== "all") {
+      filtered = filtered.filter((cf) => cf.branchId === parseInt(selectedBranch));
+    }
 
-  // Calculate totals based on filtered data
+    return filtered;
+  }, [cashflows, selectedMonth, selectedBranch, isAdmin]);
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedMonth, selectedBranch]);
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredCashflows.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedCashflows = filteredCashflows.slice(startIndex, endIndex);
+
+  // Generate page numbers to display
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    const maxVisiblePages = 5;
+    
+    if (totalPages <= maxVisiblePages) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      if (currentPage <= 3) {
+        for (let i = 1; i <= 4; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      } else if (currentPage >= totalPages - 2) {
+        pages.push(1);
+        pages.push('...');
+        for (let i = totalPages - 3; i <= totalPages; i++) pages.push(i);
+      } else {
+        pages.push(1);
+        pages.push('...');
+        for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
+        pages.push('...');
+        pages.push(totalPages);
+      }
+    }
+    return pages;
+  };
+
+  // Calculate totals based on ALL filtered data (not just current page)
   const totalIncome = useMemo(
     () =>
       filteredCashflows
@@ -158,7 +209,6 @@ export function CashflowDashboard() {
       try {
         await fetchCashflows();
         
-        // If admin, fetch branch names
         if (active) {
           const { data: { user } } = await supabase.auth.getUser();
           if (user) {
@@ -248,29 +298,54 @@ export function CashflowDashboard() {
             )}
           </div>
           
-          {/* Month Filter */}
-          <div className="flex items-center gap-2">
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Select month" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Time</SelectItem>
-                {monthOptions.map((monthKey) => (
-                  <SelectItem key={monthKey} value={monthKey}>
-                    {formatMonthLabel(monthKey)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          {/* Filters */}
+          <div className="flex items-center gap-3">
+            {/* Branch Filter (Admin only) */}
+            {isAdmin && branches.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+                <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select branch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Branches</SelectItem>
+                    {branches.map((branch) => (
+                      <SelectItem key={branch.id} value={branch.id.toString()}>
+                        {branch.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            
+            {/* Month Filter */}
+            <div className="flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-muted-foreground" />
+              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Time</SelectItem>
+                  {monthOptions.map((monthKey) => (
+                    <SelectItem key={monthKey} value={monthKey}>
+                      {formatMonthLabel(monthKey)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
         <p className="text-muted-foreground">
           {isAdmin ? "Overview of all organization cashflows" : "Overview of your cashflows"}
-          {selectedMonth !== "all" && (
+          {(selectedMonth !== "all" || selectedBranch !== "all") && (
             <span className="ml-2 text-primary font-medium">
-              • Showing: {formatMonthLabel(selectedMonth)}
+              • Filtered: 
+              {selectedBranch !== "all" && ` ${getBranchName(parseInt(selectedBranch))}`}
+              {selectedMonth !== "all" && ` ${formatMonthLabel(selectedMonth)}`}
             </span>
           )}
         </p>
@@ -287,9 +362,6 @@ export function CashflowDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Total Income
-              {selectedMonth !== "all" && (
-                <span className="ml-1 text-xs">({formatMonthLabel(selectedMonth)})</span>
-              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -303,9 +375,6 @@ export function CashflowDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Total Expense
-              {selectedMonth !== "all" && (
-                <span className="ml-1 text-xs">({formatMonthLabel(selectedMonth)})</span>
-              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -319,9 +388,6 @@ export function CashflowDashboard() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Balance
-              {selectedMonth !== "all" && (
-                <span className="ml-1 text-xs">({formatMonthLabel(selectedMonth)})</span>
-              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -420,11 +486,9 @@ export function CashflowDashboard() {
           <div className="flex items-center justify-between">
             <CardTitle>
               Cashflow Entries
-              {selectedMonth !== "all" && (
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({filteredCashflows.length} entries)
-                </span>
-              )}
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                ({filteredCashflows.length} total entries)
+              </span>
             </CardTitle>
             <Button onClick={() => navigate("/create")}>Add New Entry</Button>
           </div>
@@ -437,146 +501,192 @@ export function CashflowDashboard() {
           ) : filteredCashflows.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-muted-foreground mb-4">
-                {selectedMonth === "all" 
+                {selectedMonth === "all" && selectedBranch === "all"
                   ? "No cashflow entries yet" 
-                  : `No entries for ${formatMonthLabel(selectedMonth)}`}
+                  : "No entries for the selected filters"}
               </p>
-              {selectedMonth === "all" ? (
+              {selectedMonth === "all" && selectedBranch === "all" ? (
                 <Button onClick={() => navigate("/create")}>
                   Create Your First Entry
                 </Button>
               ) : (
-                <Button variant="outline" onClick={() => setSelectedMonth("all")}>
-                  Show All Entries
+                <Button variant="outline" onClick={() => { setSelectedMonth("all"); setSelectedBranch("all"); }}>
+                  Clear Filters
                 </Button>
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">
-                      Name
-                    </th>
-                    {isAdmin && (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
                       <th className="text-left py-3 px-4 font-semibold text-foreground">
-                        Branch
+                        Name
                       </th>
-                    )}
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">
-                      Category
-                    </th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">
-                      Amount
-                    </th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">
-                      Date
-                    </th>
-                    <th className="text-left py-3 px-4 font-semibold text-foreground">
-                      Description
-                    </th>
-                    <th className="text-right py-3 px-4 font-semibold text-foreground">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredCashflows.map((cashflow) => (
-                    <tr
-                      key={cashflow.id}
-                      className="border-b border-border hover:bg-muted/50 transition-colors"
-                    >
-                      <td className="py-3 px-4 text-foreground">
-                        {cashflow.name}
-                      </td>
                       {isAdmin && (
+                        <th className="text-left py-3 px-4 font-semibold text-foreground">
+                          Branch
+                        </th>
+                      )}
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">
+                        Category
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">
+                        Amount
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">
+                        Date
+                      </th>
+                      <th className="text-left py-3 px-4 font-semibold text-foreground">
+                        Description
+                      </th>
+                      <th className="text-right py-3 px-4 font-semibold text-foreground">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedCashflows.map((cashflow) => (
+                      <tr
+                        key={cashflow.id}
+                        className="border-b border-border hover:bg-muted/50 transition-colors"
+                      >
+                        <td className="py-3 px-4 text-foreground">
+                          {cashflow.name}
+                        </td>
+                        {isAdmin && (
+                          <td className="py-3 px-4">
+                            <span className="px-2 py-1 rounded text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
+                              {getBranchName(cashflow.branchId)}
+                            </span>
+                          </td>
+                        )}
                         <td className="py-3 px-4">
-                          <span className="px-2 py-1 rounded text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
-                            {getBranchName(cashflow.branchId)}
+                          <span
+                            className={`px-2 py-1 rounded text-sm font-medium ${
+                              cashflow.category === "income"
+                                ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100"
+                                : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
+                            }`}
+                          >
+                            {cashflow.category.charAt(0).toUpperCase() +
+                              cashflow.category.slice(1)}
                           </span>
                         </td>
-                      )}
-                      <td className="py-3 px-4">
-                        <span
-                          className={`px-2 py-1 rounded text-sm font-medium ${
-                            cashflow.category === "income"
-                              ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100"
-                              : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
-                          }`}
-                        >
-                          {cashflow.category.charAt(0).toUpperCase() +
-                            cashflow.category.slice(1)}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-foreground font-semibold">
-                        {formatCurrency(cashflow.amount)}
-                      </td>
-                      <td className="py-3 px-4 text-foreground">
-                        {formatDate(cashflow.date)}
-                      </td>
-                      <td className="py-3 px-4 text-muted-foreground text-sm">
-                        {cashflow.description?.trim()
-                          ? cashflow.description
-                          : "No description"}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              navigate("/update", {
-                                state: { cashflowId: cashflow.id },
-                              })
-                            }
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <AlertDialog
-                            open={deletingId === cashflow.id}
-                            onOpenChange={(open) => {
-                              if (!open) setDeletingId(null);
-                            }}
-                          >
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => setDeletingId(cashflow.id)}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogTitle>
-                                Delete Cashflow
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Are you sure you want to delete this cashflow
-                                entry? This action cannot be undone.
-                              </AlertDialogDescription>
-                              <div className="flex justify-end gap-2">
-                                <AlertDialogCancel onClick={() => setDeletingId(null)}>
-                                  Cancel
-                                </AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => handleDelete(cashflow.id)}
-                                  disabled={isDeleting}
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        <td className="py-3 px-4 text-foreground font-semibold">
+                          {formatCurrency(cashflow.amount)}
+                        </td>
+                        <td className="py-3 px-4 text-foreground">
+                          {formatDate(cashflow.date)}
+                        </td>
+                        <td className="py-3 px-4 text-muted-foreground text-sm">
+                          {cashflow.description?.trim()
+                            ? cashflow.description
+                            : "No description"}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                navigate("/update", {
+                                  state: { cashflowId: cashflow.id },
+                                })
+                              }
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <AlertDialog
+                              open={deletingId === cashflow.id}
+                              onOpenChange={(open) => {
+                                if (!open) setDeletingId(null);
+                              }}
+                            >
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => setDeletingId(cashflow.id)}
                                 >
-                                  {isDeleting ? "Deleting..." : "Delete"}
-                                </AlertDialogAction>
-                              </div>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogTitle>
+                                  Delete Cashflow
+                                </AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Are you sure you want to delete this cashflow
+                                  entry? This action cannot be undone.
+                                </AlertDialogDescription>
+                                <div className="flex justify-end gap-2">
+                                  <AlertDialogCancel onClick={() => setDeletingId(null)}>
+                                    Cancel
+                                  </AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDelete(cashflow.id)}
+                                    disabled={isDeleting}
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  >
+                                    {isDeleting ? "Deleting..." : "Delete"}
+                                  </AlertDialogAction>
+                                </div>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {startIndex + 1} to {Math.min(endIndex, filteredCashflows.length)} of {filteredCashflows.length} entries
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    
+                    {getPageNumbers().map((page, index) => (
+                      page === '...' ? (
+                        <span key={`ellipsis-${index}`} className="px-2 text-muted-foreground">...</span>
+                      ) : (
+                        <Button
+                          key={page}
+                          variant={currentPage === page ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setCurrentPage(page as number)}
+                          className="min-w-[36px]"
+                        >
+                          {page}
+                        </Button>
+                      )
+                    ))}
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                      disabled={currentPage === totalPages}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
