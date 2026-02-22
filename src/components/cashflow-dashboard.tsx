@@ -54,6 +54,7 @@ export function CashflowDashboard() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchesLoaded, setBranchesLoaded] = useState(false); // NEW: Track if branches are loaded
   
   // Filter states
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
@@ -202,36 +203,47 @@ export function CashflowDashboard() {
     return branch?.name || `Branch ${branchId}`;
   };
 
+  // FIXED: Load branches BEFORE cashflows
   useEffect(() => {
     let active = true;
 
     const loadData = async () => {
       try {
-        await fetchCashflows();
+        // 1. Get user profile FIRST
+        const { data: { user } } = await supabase.auth.getUser();
         
-        if (active) {
-          const { data: { user } } = await supabase.auth.getUser();
-          if (user) {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('org_id, role')
-              .eq('id', user.id)
-              .single();
+        if (user && active) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('org_id, role')
+            .eq('id', user.id)
+            .single();
+          
+          // 2. If admin, load branches BEFORE cashflows
+          if (profile?.role === 'admin' && profile?.org_id) {
+            const { data: branchData } = await supabase
+              .from('branches')
+              .select('id, name')
+              .eq('org_id', profile.org_id);
             
-            if (profile?.role === 'admin' && profile?.org_id) {
-              const { data: branchData } = await supabase
-                .from('branches')
-                .select('id, name')
-                .eq('org_id', profile.org_id);
-              
-              if (branchData && active) {
-                setBranches(branchData);
-              }
+            if (branchData && active) {
+              setBranches(branchData);
             }
           }
         }
+        
+        // Mark branches as loaded (even if empty for non-admin)
+        if (active) {
+          setBranchesLoaded(true);
+        }
+        
+        // 3. THEN load cashflows (branches are ready now)
+        if (active) {
+          await fetchCashflows();
+        }
       } catch (fetchError) {
         if (!active) return;
+        setBranchesLoaded(true); // Still mark as loaded to show UI
         const description =
           fetchError instanceof Error
             ? fetchError.message
@@ -300,8 +312,8 @@ export function CashflowDashboard() {
           
           {/* Filters */}
           <div className="flex items-center gap-3">
-            {/* Branch Filter (Admin only) */}
-            {isAdmin && branches.length > 0 && (
+            {/* Branch Filter (Admin only) - FIXED: Show when branchesLoaded */}
+            {isAdmin && branchesLoaded && branches.length > 0 && (
               <div className="flex items-center gap-2">
                 <Building2 className="h-4 w-4 text-muted-foreground" />
                 <Select value={selectedBranch} onValueChange={setSelectedBranch}>
