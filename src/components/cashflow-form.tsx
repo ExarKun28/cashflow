@@ -29,6 +29,7 @@ export function CashflowForm() {
   const { addCashflow } = useCashflowStore()
   const [open, setOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [transactionType, setTransactionType] = useState<'normal' | 'refund'>('normal')
 
   const [formData, setFormData] = useState({
     name: '',
@@ -42,17 +43,22 @@ export function CashflowForm() {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
+    setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
   const handleCategoryChange = (value: 'income' | 'expense') => {
-    setFormData((prev) => ({
-      ...prev,
-      category: value,
-    }))
+    setFormData((prev) => ({ ...prev, category: value }))
+  }
+
+  const handleTransactionTypeChange = (value: 'normal' | 'refund') => {
+    setTransactionType(value)
+    // Refund reverses category: if expense selected, refund goes as income and vice versa
+    if (value === 'refund') {
+      setFormData((prev) => ({
+        ...prev,
+        category: prev.category === 'expense' ? 'income' : 'expense',
+      }))
+    }
   }
 
   const handleSubmit = async () => {
@@ -65,19 +71,36 @@ export function CashflowForm() {
 
     setIsSubmitting(true)
 
+    // Prefix name and description with [REFUND] if type is refund
+    const finalName = transactionType === 'refund'
+      ? `[REFUND] ${formData.name}`
+      : formData.name
+
+    const finalDescription = transactionType === 'refund'
+      ? formData.description
+        ? `[REFUND] ${formData.description}`
+        : `[REFUND] Original amount: ₱${parseFloat(formData.amount).toLocaleString()}`
+      : formData.description
+
     try {
       await addCashflow({
-        name: formData.name,
+        name: finalName,
         category: formData.category,
         amount: parseFloat(formData.amount),
         date: formData.date,
-        description: formData.description,
+        description: finalDescription,
       })
 
       setOpen(false)
-      toast.success('Success', {
-        description: 'Cashflow entry has been created successfully.',
-      })
+      toast.success(
+        transactionType === 'refund' ? 'Refund Recorded' : 'Success',
+        {
+          description:
+            transactionType === 'refund'
+              ? `Refund of ₱${parseFloat(formData.amount).toLocaleString()} has been recorded and logged to the blockchain audit trail.`
+              : 'Cashflow entry has been created successfully.',
+        }
+      )
 
       setFormData({
         name: '',
@@ -86,6 +109,7 @@ export function CashflowForm() {
         date: new Date().toISOString().split('T')[0],
         description: '',
       })
+      setTransactionType('normal')
 
       navigate('/dashboard')
     } catch (error) {
@@ -99,6 +123,8 @@ export function CashflowForm() {
     }
   }
 
+  const isRefund = transactionType === 'refund'
+
   return (
     <Card>
       <CardHeader>
@@ -106,18 +132,43 @@ export function CashflowForm() {
       </CardHeader>
       <CardContent>
         <div className="space-y-6">
+
+          {/* Transaction Type selector */}
+          <div className="space-y-2">
+            <Label className="text-foreground">Transaction Type *</Label>
+            <Select value={transactionType} onValueChange={handleTransactionTypeChange}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="normal">Normal</SelectItem>
+                <SelectItem value="refund">Refund</SelectItem>
+              </SelectContent>
+            </Select>
+            {isRefund && (
+              <p className="text-xs text-orange-500">
+                This entry will be recorded as a <span className="font-mono">[REFUND]</span> on the blockchain audit log. The category has been reversed automatically.
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <Label htmlFor="name" className="text-foreground">
-                Name *
+                {isRefund ? 'Original Entry Name *' : 'Name *'}
               </Label>
               <Input
                 id="name"
                 name="name"
-                placeholder="e.g., Monthly Salary"
+                placeholder={isRefund ? 'e.g., Donk sale' : 'e.g., Monthly Salary'}
                 value={formData.name}
                 onChange={handleChange}
               />
+              {isRefund && (
+                <p className="text-xs text-muted-foreground">
+                  Will be saved as: <span className="font-mono">[REFUND] {formData.name || '...'}</span>
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -133,6 +184,11 @@ export function CashflowForm() {
                   <SelectItem value="expense">Expense</SelectItem>
                 </SelectContent>
               </Select>
+              {isRefund && (
+                <p className="text-xs text-muted-foreground">
+                  Category reversed from original to offset the amount.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -171,7 +227,11 @@ export function CashflowForm() {
             <Textarea
               id="description"
               name="description"
-              placeholder="Add notes about this cashflow entry..."
+              placeholder={
+                isRefund
+                  ? 'e.g., Customer returned item, duplicate charge...'
+                  : 'Add notes about this cashflow entry...'
+              }
               value={formData.description}
               onChange={handleChange}
               rows={4}
@@ -181,24 +241,40 @@ export function CashflowForm() {
           <div className="flex gap-3 pt-6">
             <AlertDialog open={open} onOpenChange={setOpen}>
               <AlertDialogTrigger asChild>
-                <Button className="flex-1" disabled={isSubmitting}>
-                  {isSubmitting ? 'Creating...' : 'Create Entry'}
+                <Button
+                  className={`flex-1 ${isRefund ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}`}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting
+                    ? isRefund ? 'Recording Refund...' : 'Creating...'
+                    : isRefund ? 'Record Refund' : 'Create Entry'}
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
-                <AlertDialogTitle>Confirm Creation</AlertDialogTitle>
+                <AlertDialogTitle>
+                  {isRefund ? 'Confirm Refund' : 'Confirm Creation'}
+                </AlertDialogTitle>
                 <AlertDialogDescription>
-                  Are you sure you want to create this cashflow entry?
+                  {isRefund
+                    ? `This will record a refund of ₱${parseFloat(formData.amount || '0').toLocaleString()} for "${formData.name}". A [REFUND] entry will be appended to the blockchain audit log.`
+                    : 'Are you sure you want to create this cashflow entry?'}
                 </AlertDialogDescription>
                 <div className="flex justify-end gap-2">
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={handleSubmit} disabled={isSubmitting}>
-                    {isSubmitting ? 'Creating...' : 'Create'}
+                  <AlertDialogAction
+                    onClick={handleSubmit}
+                    disabled={isSubmitting}
+                    className={isRefund ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}
+                  >
+                    {isSubmitting
+                      ? isRefund ? 'Recording...' : 'Creating...'
+                      : isRefund ? 'Confirm Refund' : 'Create'}
                   </AlertDialogAction>
                 </div>
               </AlertDialogContent>
             </AlertDialog>
           </div>
+
         </div>
       </CardContent>
     </Card>

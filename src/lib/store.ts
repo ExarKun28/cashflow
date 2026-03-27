@@ -72,6 +72,7 @@ interface CashflowStore {
     payload: Partial<CashflowInput>
   ) => Promise<Cashflow | null>
   deleteCashflow: (id: string) => Promise<void>
+  refundCashflow: (id: string, reason?: string) => Promise<void>
 }
 
 const normalizeTimestamp = (value: string | null | undefined) => {
@@ -158,13 +159,12 @@ const ensureProfile = async () => {
     throw new Error('Profile not found')
   }
 
-  // Admin doesn't need branch assignment, but regular users do
   if (profile.role !== 'admin' && !profile.branch_id) {
     throw new Error('Your profile is missing a branch assignment')
   }
 
-  return { 
-    userId: user.id, 
+  return {
+    userId: user.id,
     branchId: profile.branch_id,
     orgId: profile.org_id,
     role: profile.role || 'user'
@@ -223,14 +223,13 @@ const buildUpdatePayload = (
   return updates
 }
 
-// Helper function to build amendment description
 const buildAmendmentDescription = (
   original: Cashflow,
   updated: Cashflow,
   originalTxId?: string
 ): string => {
   const changes: string[] = []
-  
+
   if (original.amount !== updated.amount) {
     changes.push(`Amount: ₱${original.amount.toLocaleString()} → ₱${updated.amount.toLocaleString()}`)
   }
@@ -242,10 +241,10 @@ const buildAmendmentDescription = (
     const newDate = new Date(updated.date).toLocaleDateString()
     changes.push(`Date: ${oldDate} → ${newDate}`)
   }
-  
+
   const changesText = changes.length > 0 ? changes.join(' | ') : 'No value changes'
   const refText = originalTxId ? ` | Ref: ${originalTxId}` : ''
-  
+
   return `[AMENDMENT] ${changesText}${refText}`
 }
 
@@ -260,7 +259,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
 
     try {
       const { branchId, orgId, role } = await ensureProfile()
-      
+
       set({ userRole: role })
 
       let incomeQuery = supabase
@@ -273,17 +272,13 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
         .select('*')
         .order('created_at', { ascending: false })
 
-      // Admin sees all transactions in their organization
-      // User sees only transactions from their branch
       if (role === 'admin') {
-        // Admin: filter by org_id
         if (orgId) {
           incomeQuery = incomeQuery.eq('org_id', orgId)
           expenseQuery = expenseQuery.eq('org_id', orgId)
         }
         console.log('[CashflowStore] Admin mode: fetching all org transactions')
       } else {
-        // User: filter by branch_id
         if (branchId) {
           incomeQuery = incomeQuery.eq('branch_id', branchId)
           expenseQuery = expenseQuery.eq('branch_id', branchId)
@@ -327,7 +322,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
   addCashflow: async (payload) => {
     console.log('[CashflowStore] addCashflow start', payload)
 
-    const { branchId, userId, orgId } = await ensureProfile() 
+    const { branchId, userId, orgId } = await ensureProfile()
 
     console.log('[CashflowStore] Profile data:', { branchId, userId, orgId })
 
@@ -343,7 +338,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
     if (error) {
       console.error('[CashflowStore] addCashflow error', error)
       throw new Error(error.message)
-    } 
+    }
     const inserted = (data ?? null) as IncomeRow | ExpenseRow | null
 
     if (!inserted) {
@@ -355,7 +350,6 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
         ? mapIncomeRow(inserted as IncomeRow)
         : mapExpenseRow(inserted as ExpenseRow)
 
-    // Also save to blockchain for transparency
     try {
       await createBlockchainTransaction({
         smeId: `${orgId}-${branchId}`,
@@ -420,28 +414,23 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
         ? mapIncomeRow(updatedRow as IncomeRow)
         : mapExpenseRow(updatedRow as ExpenseRow)
 
-    // Create amendment record on blockchain (keeps original, adds amendment)
     try {
       const blockchainTxns = await getBlockchainTransactions()
-      
-      // Find the original transaction to get its ID for reference
-      const originalTx = blockchainTxns.find(tx => 
-        tx.amount === existing.amount && 
+
+      const originalTx = blockchainTxns.find(tx =>
+        tx.amount === existing.amount &&
         tx.category === existing.name &&
         tx.type === existing.category
       )
-      
-      // Build amendment description showing what changed
+
       const amendmentDescription = buildAmendmentDescription(
-        existing, 
-        normalized, 
+        existing,
+        normalized,
         originalTx?.id
       )
 
-      // Get profile for smeId
       const { branchId, orgId } = await ensureProfile()
-      
-      // Create amendment record with updated values
+
       await createBlockchainTransaction({
         smeId: `${orgId}-${branchId}`,
         type: normalized.category,
@@ -450,7 +439,7 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
         description: amendmentDescription,
         date: normalized.date,
       })
-      
+
       console.log('[CashflowStore] Blockchain amendment record created:', amendmentDescription)
     } catch (blockchainError) {
       console.warn('[CashflowStore] Blockchain amendment failed (non-critical):', blockchainError)
@@ -481,28 +470,26 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       throw new Error(error.message)
     }
 
-    // Create deletion record on blockchain (for audit trail)
     try {
       const blockchainTxns = await getBlockchainTransactions()
-      
-      const originalTx = blockchainTxns.find(tx => 
-        tx.amount === existing.amount && 
+
+      const originalTx = blockchainTxns.find(tx =>
+        tx.amount === existing.amount &&
         tx.category === existing.name &&
         tx.type === existing.category
       )
 
       const { branchId, orgId } = await ensureProfile()
-      
-      // Create a deletion record instead of actually deleting
+
       await createBlockchainTransaction({
         smeId: `${orgId}-${branchId}`,
         type: existing.category,
-        amount: 0, // Zero amount for deletion record
+        amount: 0,
         category: existing.name,
         description: `[DELETED] Original amount: ₱${existing.amount.toLocaleString()} | Ref: ${originalTx?.id || 'unknown'}`,
         date: new Date().toISOString(),
       })
-      
+
       console.log('[CashflowStore] Blockchain deletion record created')
     } catch (blockchainError) {
       console.warn('[CashflowStore] Blockchain deletion record failed (non-critical):', blockchainError)
@@ -512,5 +499,92 @@ export const useCashflowStore = create<CashflowStore>((set, get) => ({
       cashflows: state.cashflows.filter((cf) => cf.id !== id),
     }))
     console.log('[CashflowStore] deleteCashflow success', { id })
+  },
+
+  // ── REFUND ──────────────────────────────────────────────────────────────────
+  refundCashflow: async (id, reason) => {
+    console.log('[CashflowStore] refundCashflow start', { id, reason })
+    const existing = get().cashflows.find((cf) => cf.id === id)
+
+    if (!existing) {
+      throw new Error('Cashflow entry not found')
+    }
+
+    // Insert a new row in Supabase as a refund entry (original stays untouched)
+    const { branchId, userId, orgId } = await ensureProfile()
+
+    const refundName = `[REFUND] ${existing.name}`
+    const refundDescription = reason
+      ? `[REFUND] Reason: ${reason} | Original amount: ₱${existing.amount.toLocaleString()}`
+      : `[REFUND] Original amount: ₱${existing.amount.toLocaleString()}`
+
+    const insertPayload: Record<string, unknown> = {
+      branch_id: branchId,
+      user_id: userId,
+      org_id: orgId,
+      amount: existing.amount,
+      created_at: new Date().toISOString(),
+      cashflow_id: null,
+    }
+
+    // Refund reverses the original: income refund goes to expense table, expense refund goes to income table
+    const refundTable = existing.sourceTable === INCOME_TABLE ? EXPENSE_TABLE : INCOME_TABLE
+
+    if (refundTable === INCOME_TABLE) {
+      insertPayload.income_type = refundName
+    } else {
+      insertPayload.expense_category = refundName
+      insertPayload.description = refundDescription
+    }
+
+    const { data, error } = await supabase
+      .from(refundTable)
+      .insert(insertPayload)
+      .select()
+      .single()
+
+    if (error) {
+      console.error('[CashflowStore] refundCashflow supabase error', error)
+      throw new Error(error.message)
+    }
+
+    const inserted = (data ?? null) as IncomeRow | ExpenseRow | null
+
+    if (!inserted) {
+      return
+    }
+
+    const normalized =
+      refundTable === INCOME_TABLE
+        ? mapIncomeRow(inserted as IncomeRow)
+        : mapExpenseRow(inserted as ExpenseRow)
+
+    // Record refund on blockchain — original stays, this is appended as [REFUND]
+    try {
+      const blockchainTxns = await getBlockchainTransactions()
+
+      const originalTx = blockchainTxns.find(tx =>
+        tx.amount === existing.amount &&
+        tx.category === existing.name &&
+        tx.type === existing.category
+      )
+
+      await createBlockchainTransaction({
+        smeId: `${orgId}-${branchId}`,
+        type: refundTable === INCOME_TABLE ? 'income' : 'expense',
+        amount: existing.amount,
+        category: refundName,
+        description: `${refundDescription} | Ref: ${originalTx?.id || 'unknown'}`,
+        date: new Date().toISOString(),
+      })
+
+      console.log('[CashflowStore] Blockchain refund record created')
+    } catch (blockchainError) {
+      console.warn('[CashflowStore] Blockchain refund record failed (non-critical):', blockchainError)
+    }
+
+    // Add the refund entry to the store so UI updates immediately
+    set((state) => ({ cashflows: [normalized, ...state.cashflows] }))
+    console.log('[CashflowStore] refundCashflow success', { id })
   },
 }))

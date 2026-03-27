@@ -40,7 +40,6 @@ const formatDateForInput = (value: string) => {
   if (Number.isNaN(parsed.getTime())) {
     return value
   }
-
   return parsed.toISOString().split('T')[0]
 }
 
@@ -53,9 +52,12 @@ const buildFormState = (cashflow: Cashflow): CashflowFormState => ({
 })
 
 export function CashflowUpdateForm({ cashflow }: CashflowUpdateFormProps) {
-  const { updateCashflow } = useCashflowStore()
+  const { updateCashflow, refundCashflow } = useCashflowStore()
   const [open, setOpen] = useState(false)
+  const [refundOpen, setRefundOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isRefunding, setIsRefunding] = useState(false)
+  const [refundReason, setRefundReason] = useState('')
 
   const [formData, setFormData] = useState<CashflowFormState>(() =>
     buildFormState(cashflow),
@@ -69,17 +71,11 @@ export function CashflowUpdateForm({ cashflow }: CashflowUpdateFormProps) {
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }))
+    setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
   const handleCategoryChange = (value: 'income' | 'expense') => {
-    setFormData((prev) => ({
-      ...prev,
-      category: value,
-    }))
+    setFormData((prev) => ({ ...prev, category: value }))
   }
 
   const handleSubmit = async () => {
@@ -113,6 +109,28 @@ export function CashflowUpdateForm({ cashflow }: CashflowUpdateFormProps) {
       toast.error('Error', { description })
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleRefund = async () => {
+    setIsRefunding(true)
+
+    try {
+      await refundCashflow(cashflow.id, refundReason || undefined)
+
+      setRefundOpen(false)
+      setRefundReason('')
+      toast.success('Refund Issued', {
+        description: `A refund of ₱${cashflow.amount.toLocaleString()} has been recorded. The original entry remains unchanged on the blockchain.`,
+      })
+    } catch (error) {
+      const description =
+        error instanceof Error
+          ? error.message
+          : 'Unable to process the refund.'
+      toast.error('Error', { description })
+    } finally {
+      setIsRefunding(false)
     }
   }
 
@@ -196,21 +214,74 @@ export function CashflowUpdateForm({ cashflow }: CashflowUpdateFormProps) {
           </div>
 
           <div className="flex gap-3 pt-6">
+            {/* Update button */}
             <AlertDialog open={open} onOpenChange={setOpen}>
               <AlertDialogTrigger asChild>
-                <Button className="flex-1" disabled={isSubmitting}>
+                <Button className="flex-1" disabled={isSubmitting || isRefunding}>
                   {isSubmitting ? 'Updating...' : 'Update Entry'}
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogTitle>Confirm Update</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Are you sure you want to update this cashflow entry?
+                  Are you sure you want to update this cashflow entry? An amendment record will be added to the blockchain audit log.
                 </AlertDialogDescription>
                 <div className="flex justify-end gap-2">
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction onClick={handleSubmit} disabled={isSubmitting}>
                     {isSubmitting ? 'Updating...' : 'Update'}
+                  </AlertDialogAction>
+                </div>
+              </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Refund button */}
+            <AlertDialog open={refundOpen} onOpenChange={setRefundOpen}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="flex-1 border-orange-500 text-orange-500 hover:bg-orange-500/10"
+                  disabled={isSubmitting || isRefunding}
+                >
+                  {isRefunding ? 'Processing...' : 'Issue Refund'}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogTitle>Issue Refund</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will issue a refund of{' '}
+                  <span className="font-semibold text-foreground">
+                    ₱{cashflow.amount.toLocaleString()}
+                  </span>{' '}
+                  for <span className="font-semibold text-foreground">{cashflow.name}</span>.
+                  <br /><br />
+                  The original entry will remain unchanged on the blockchain. A new{' '}
+                  <span className="font-mono text-xs">[REFUND]</span> record will be appended to the audit log.
+                </AlertDialogDescription>
+
+                <div className="mt-2 space-y-2">
+                  <Label htmlFor="refund-reason" className="text-foreground">
+                    Reason <span className="text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Textarea
+                    id="refund-reason"
+                    placeholder="e.g., Customer returned item, duplicate charge..."
+                    value={refundReason}
+                    onChange={(e) => setRefundReason(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 mt-4">
+                  <AlertDialogCancel onClick={() => setRefundReason('')}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleRefund}
+                    disabled={isRefunding}
+                    className="bg-orange-500 hover:bg-orange-600 text-white"
+                  >
+                    {isRefunding ? 'Processing...' : 'Confirm Refund'}
                   </AlertDialogAction>
                 </div>
               </AlertDialogContent>

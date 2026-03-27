@@ -20,6 +20,9 @@ type Branch = {
 
 const ITEMS_PER_PAGE = 10;
 
+// Helper: detect refund entries by category prefix
+const isRefundCategory = (category: string) => category.startsWith('[REFUND]')
+
 export default function AuditLogPage() {
   const [transactions, setTransactions] = useState<BlockchainTransaction[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -28,20 +31,15 @@ export default function AuditLogPage() {
   const [userRole, setUserRole] = useState<string | null>(null)
   const [orgName, setOrgName] = useState<string | null>(null)
   const [branches, setBranches] = useState<Branch[]>([])
-  
-  // Filter states
+
   const [selectedMonth, setSelectedMonth] = useState<string>("all")
   const [selectedBranch, setSelectedBranch] = useState<string>("all")
-  
-  // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
 
   const isAdmin = userRole === 'admin'
 
-  // Generate month options from available transactions
   const monthOptions = useMemo(() => {
     const months = new Set<string>()
-    
     transactions.forEach((tx) => {
       const date = new Date(tx.date)
       if (!isNaN(date.getTime())) {
@@ -49,18 +47,15 @@ export default function AuditLogPage() {
         months.add(monthKey)
       }
     })
-
     return Array.from(months).sort((a, b) => b.localeCompare(a))
   }, [transactions])
 
-  // Format month key to readable label
   const formatMonthLabel = (monthKey: string) => {
     const [year, month] = monthKey.split('-')
     const date = new Date(parseInt(year), parseInt(month) - 1)
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   }
 
-  // Get branch ID from smeName (format: "orgId-branchId")
   const getBranchIdFromSmeName = (smeName: string): number | null => {
     if (!smeName) return null
     const parts = smeName.split('-')
@@ -71,11 +66,9 @@ export default function AuditLogPage() {
     return null
   }
 
-  // Filter transactions by selected month AND branch
   const filteredTransactions = useMemo(() => {
     let filtered = transactions
 
-    // Filter by month
     if (selectedMonth !== "all") {
       filtered = filtered.filter((tx) => {
         const date = new Date(tx.date)
@@ -85,7 +78,6 @@ export default function AuditLogPage() {
       })
     }
 
-    // Filter by branch (Admin only)
     if (isAdmin && selectedBranch !== "all") {
       filtered = filtered.filter((tx) => {
         const branchId = getBranchIdFromSmeName(tx.smeName)
@@ -96,26 +88,21 @@ export default function AuditLogPage() {
     return filtered
   }, [transactions, selectedMonth, selectedBranch, isAdmin])
 
-  // Reset to page 1 when filter changes
   useEffect(() => {
     setCurrentPage(1)
   }, [selectedMonth, selectedBranch])
 
-  // Pagination calculations
   const totalPages = Math.ceil(filteredTransactions.length / ITEMS_PER_PAGE)
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
   const endIndex = startIndex + ITEMS_PER_PAGE
   const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex)
 
-  // Generate page numbers to display
   const getPageNumbers = () => {
     const pages: (number | string)[] = []
     const maxVisiblePages = 5
-    
+
     if (totalPages <= maxVisiblePages) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i)
-      }
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
     } else {
       if (currentPage <= 3) {
         for (let i = 1; i <= 4; i++) pages.push(i)
@@ -136,27 +123,33 @@ export default function AuditLogPage() {
     return pages
   }
 
-  // Calculate totals based on ALL filtered data (not just current page)
-  const totalIncome = useMemo(() => 
+  // ── Totals ──────────────────────────────────────────────────────────────────
+  const totalIncome = useMemo(() =>
     filteredTransactions
-      .filter(t => t.type === 'income')
+      .filter(t => t.type === 'income' && !isRefundCategory(t.category))
       .reduce((sum, t) => sum + t.amount, 0),
     [filteredTransactions]
   )
 
-  const totalExpense = useMemo(() => 
+  const totalExpense = useMemo(() =>
     filteredTransactions
-      .filter(t => t.type === 'expense')
+      .filter(t => t.type === 'expense' && !isRefundCategory(t.category))
       .reduce((sum, t) => sum + t.amount, 0),
     [filteredTransactions]
   )
 
-  const balance = totalIncome - totalExpense
+  // Refunds: entries whose category starts with [REFUND]
+  const totalRefunds = useMemo(() =>
+    filteredTransactions
+      .filter(t => isRefundCategory(t.category))
+      .reduce((sum, t) => sum + t.amount, 0),
+    [filteredTransactions]
+  )
 
-  // Get branch name from smeName (format: "orgId-branchId")
+  const balance = totalIncome - totalExpense - totalRefunds
+
   const getBranchName = (smeName: string) => {
     if (!smeName) return "Unknown"
-    
     const parts = smeName.split('-')
     if (parts.length >= 2) {
       const branchId = parseInt(parts[parts.length - 1], 10)
@@ -165,7 +158,6 @@ export default function AuditLogPage() {
         return branch?.name || `Branch ${branchId}`
       }
     }
-    
     return "Unknown"
   }
 
@@ -173,7 +165,7 @@ export default function AuditLogPage() {
     setIsLoading(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      
+
       if (!user) {
         setIsLoading(false)
         return
@@ -201,17 +193,15 @@ export default function AuditLogPage() {
           .from('branches')
           .select('id, name')
           .eq('org_id', userOrgId)
-        
-        if (branchData) {
-          setBranches(branchData)
-        }
+
+        if (branchData) setBranches(branchData)
       }
 
       const health = await checkBlockchainHealth()
       setIsHealthy(health.status === 'OK')
 
       const allTransactions = await getBlockchainTransactions()
-      
+
       let filteredTx: BlockchainTransaction[] = []
 
       if (role === 'admin' && userOrgId) {
@@ -221,26 +211,19 @@ export default function AuditLogPage() {
           .eq('org_id', userOrgId)
 
         const branchIds = orgBranches?.map(b => b.id) || []
-        
+
         const { data: orgUsers } = await supabase
           .from('profiles')
           .select('id')
           .eq('org_id', userOrgId)
 
         const orgUserIds = orgUsers?.map(u => u.id) || []
-        
-        filteredTx = allTransactions.filter(tx => 
+
+        filteredTx = allTransactions.filter(tx =>
           branchIds.some(branchId => tx.smeName === `${userOrgId}-${branchId}`) ||
           tx.smeName === userOrgId ||
           orgUserIds.includes(tx.smeName)
         )
-        
-        console.log('[AuditLog] Admin mode: showing all org transactions', {
-          orgId: userOrgId,
-          branchCount: branchIds.length,
-          userCount: orgUserIds.length,
-          transactionCount: filteredTx.length
-        })
       } else {
         const { data: userProfile } = await supabase
           .from('profiles')
@@ -250,19 +233,12 @@ export default function AuditLogPage() {
 
         const userBranchId = userProfile?.branch_id
 
-        filteredTx = allTransactions.filter(tx => 
+        filteredTx = allTransactions.filter(tx =>
           tx.smeName === `${userOrgId}-${userBranchId}` ||
           tx.smeName === user.id
         )
-
-        console.log('[AuditLog] User mode: showing branch transactions only', {
-          userId: user.id,
-          orgId: userOrgId,
-          branchId: userBranchId,
-          transactionCount: filteredTx.length
-        })
       }
-      
+
       setTransactions(filteredTx)
       setLastUpdated(new Date())
     } catch (error) {
@@ -303,6 +279,34 @@ export default function AuditLogPage() {
     })}`
   }
 
+  // ── Description color helper ─────────────────────────────────────────────
+  const getDescriptionClass = (description: string) => {
+    if (description.startsWith('[AMENDMENT]')) return 'text-yellow-500'
+    if (description.startsWith('[DELETED]'))   return 'text-red-500'
+    if (description.startsWith('[REFUND]'))    return 'text-orange-500'
+    return ''
+  }
+
+  // ── Type badge helper ────────────────────────────────────────────────────
+  const TypeBadge = ({ tx }: { tx: BlockchainTransaction }) => {
+    if (isRefundCategory(tx.category)) {
+      return (
+        <span className="px-2 py-1 rounded text-xs font-medium bg-orange-500/20 text-orange-500">
+          refund
+        </span>
+      )
+    }
+    return (
+      <span className={`px-2 py-1 rounded text-xs font-medium ${
+        tx.type === 'income'
+          ? 'bg-green-500/20 text-green-500'
+          : 'bg-red-500/20 text-red-500'
+      }`}>
+        {tx.type}
+      </span>
+    )
+  }
+
   return (
     <div className="flex h-screen bg-background">
       <Sidebar />
@@ -331,7 +335,6 @@ export default function AuditLogPage() {
               )}
             </div>
             <div className="flex items-center gap-3">
-              {/* Branch Filter (Admin only) */}
               {isAdmin && branches.length > 0 && (
                 <div className="flex items-center gap-2">
                   <Building2 className="h-4 w-4 text-muted-foreground" />
@@ -350,8 +353,7 @@ export default function AuditLogPage() {
                   </Select>
                 </div>
               )}
-              
-              {/* Month Filter */}
+
               <div className="flex items-center gap-2">
                 <CalendarDays className="h-4 w-4 text-muted-foreground" />
                 <Select value={selectedMonth} onValueChange={setSelectedMonth}>
@@ -368,7 +370,7 @@ export default function AuditLogPage() {
                   </SelectContent>
                 </Select>
               </div>
-              
+
               <Button onClick={fetchData} disabled={isLoading} variant="outline">
                 <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
                 Refresh
@@ -376,8 +378,8 @@ export default function AuditLogPage() {
             </div>
           </div>
 
-          {/* Status Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          {/* ── Status Cards — 6 when refunds exist, 5 otherwise ── */}
+          <div className={`grid grid-cols-1 gap-4 ${totalRefunds > 0 ? 'md:grid-cols-6' : 'md:grid-cols-5'}`}>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-sm font-medium">Blockchain Status</CardTitle>
@@ -414,9 +416,7 @@ export default function AuditLogPage() {
                 <CardTitle className="text-sm font-medium">Total Income</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-500">
-                  {formatCurrency(totalIncome)}
-                </div>
+                <div className="text-2xl font-bold text-green-500">{formatCurrency(totalIncome)}</div>
               </CardContent>
             </Card>
 
@@ -425,11 +425,21 @@ export default function AuditLogPage() {
                 <CardTitle className="text-sm font-medium">Total Expense</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-red-500">
-                  {formatCurrency(totalExpense)}
-                </div>
+                <div className="text-2xl font-bold text-red-500">{formatCurrency(totalExpense)}</div>
               </CardContent>
             </Card>
+
+            {/* Refund card — only shown when refunds exist */}
+            {totalRefunds > 0 && (
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">Total Refunds</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-orange-500">{formatCurrency(totalRefunds)}</div>
+                </CardContent>
+              </Card>
+            )}
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -443,7 +453,6 @@ export default function AuditLogPage() {
             </Card>
           </div>
 
-          {/* Last Updated */}
           {lastUpdated && (
             <p className="text-sm text-muted-foreground">
               Last updated: {formatTimestamp(lastUpdated.toISOString())}
@@ -457,7 +466,6 @@ export default function AuditLogPage() {
             </p>
           )}
 
-          {/* Transactions List */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -478,7 +486,7 @@ export default function AuditLogPage() {
                     : "No transactions for the selected filters."}
                   {(selectedMonth !== "all" || selectedBranch !== "all") && (
                     <div className="mt-2">
-                      <Button variant="outline" size="sm" onClick={() => { setSelectedMonth("all"); setSelectedBranch("all"); }}>
+                      <Button variant="outline" size="sm" onClick={() => { setSelectedMonth("all"); setSelectedBranch("all") }}>
                         Clear Filters
                       </Button>
                     </div>
@@ -491,9 +499,7 @@ export default function AuditLogPage() {
                       <thead>
                         <tr className="border-b">
                           <th className="text-left py-3 px-2">Transaction ID</th>
-                          {isAdmin && (
-                            <th className="text-left py-3 px-2">Branch</th>
-                          )}
+                          {isAdmin && <th className="text-left py-3 px-2">Branch</th>}
                           <th className="text-left py-3 px-2">Type</th>
                           <th className="text-left py-3 px-2">Category</th>
                           <th className="text-left py-3 px-2">Amount</th>
@@ -504,55 +510,62 @@ export default function AuditLogPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedTransactions.map((tx) => (
-                          <tr key={tx.id} className="border-b hover:bg-muted/50">
-                            <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
-                            {isAdmin && (
+                        {paginatedTransactions.map((tx) => {
+                          const isRefund = isRefundCategory(tx.category)
+                          return (
+                            <tr
+                              key={tx.id}
+                              className={`border-b transition-colors ${
+                                isRefund
+                                  ? 'bg-orange-50/30 dark:bg-orange-950/20 hover:bg-orange-50/60 dark:hover:bg-orange-950/30'
+                                  : 'hover:bg-muted/50'
+                              }`}
+                            >
+                              <td className="py-3 px-2 font-mono text-xs">{tx.id}</td>
+                              {isAdmin && (
+                                <td className="py-3 px-2">
+                                  <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
+                                    {getBranchName(tx.smeName)}
+                                  </span>
+                                </td>
+                              )}
                               <td className="py-3 px-2">
-                                <span className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-500">
-                                  {getBranchName(tx.smeName)}
+                                <TypeBadge tx={tx} />
+                              </td>
+                              <td className={`py-3 px-2 ${isRefund ? 'text-orange-500 font-medium' : ''}`}>
+                                {tx.category}
+                              </td>
+                              <td className={`py-3 px-2 font-medium ${
+                                isRefund
+                                  ? 'text-orange-500'
+                                  : tx.type === 'income' ? 'text-green-500' : 'text-red-500'
+                              }`}>
+                                {formatCurrency(tx.amount)}
+                              </td>
+                              <td className="py-3 px-2 text-xs max-w-[200px] truncate" title={tx.description}>
+                                {tx.description ? (
+                                  <span className={getDescriptionClass(tx.description)}>
+                                    {tx.description}
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-2">{formatDate(tx.date)}</td>
+                              <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
+                              <td className="py-3 px-2">
+                                <span className="flex items-center gap-1 text-green-500 text-xs">
+                                  <CheckCircle className="h-3 w-3" />
+                                  Verified
                                 </span>
                               </td>
-                            )}
-                            <td className="py-3 px-2">
-                              <span className={`px-2 py-1 rounded text-xs font-medium ${
-                                tx.type === 'income' 
-                                  ? 'bg-green-500/20 text-green-500' 
-                                  : 'bg-red-500/20 text-red-500'
-                              }`}>
-                                {tx.type}
-                              </span>
-                            </td>
-                            <td className="py-3 px-2">{tx.category}</td>
-                            <td className={`py-3 px-2 font-medium ${
-                              tx.type === 'income' ? 'text-green-500' : 'text-red-500'
-                            }`}>
-                              {formatCurrency(tx.amount)}
-                            </td>
-                            <td className="py-3 px-2 text-xs max-w-[200px] truncate" title={tx.description}>
-                              {tx.description ? (
-                                <span className={tx.description.startsWith('[AMENDMENT]') ? 'text-yellow-500' : tx.description.startsWith('[DELETED]') ? 'text-red-500' : ''}>
-                                  {tx.description}
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground">-</span>
-                              )}
-                            </td>
-                            <td className="py-3 px-2">{formatDate(tx.date)}</td>
-                            <td className="py-3 px-2 text-xs">{formatTimestamp(tx.createdAt)}</td>
-                            <td className="py-3 px-2">
-                              <span className="flex items-center gap-1 text-green-500 text-xs">
-                                <CheckCircle className="h-3 w-3" />
-                                Verified
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
 
-                  {/* Pagination */}
                   {totalPages > 1 && (
                     <div className="flex items-center justify-between mt-4 pt-4 border-t">
                       <div className="text-sm text-muted-foreground">
@@ -567,7 +580,7 @@ export default function AuditLogPage() {
                         >
                           <ChevronLeft className="h-4 w-4" />
                         </Button>
-                        
+
                         {getPageNumbers().map((page, index) => (
                           page === '...' ? (
                             <span key={`ellipsis-${index}`} className="px-2 text-muted-foreground">...</span>
@@ -583,7 +596,7 @@ export default function AuditLogPage() {
                             </Button>
                           )
                         ))}
-                        
+
                         <Button
                           variant="outline"
                           size="sm"
